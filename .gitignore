@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# CDK
+.cdk.staging/
+cdk.out/
+*.js
+*.d.ts
+!jest.config.js
+*.js.map
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Lambda layers
+infrastructure/lambda-layers/dependencies/python/bin/
+infrastructure/lambda-layers/dependencies/python/lib/
+infrastructure/lambda-layers/dependencies/python/*.dist-info/
+
+# Testing
+coverage/
+.nyc_output/
+*.log
+
+# Build outputs
+frontend/build/
+frontend/dist/
+
+# Secrets
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# AWS
+.aws-sam/
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+.terraform/
