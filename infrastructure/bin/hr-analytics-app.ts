@@ -4,12 +4,13 @@ import * as cdk from 'aws-cdk-lib';
 import { NetworkStack } from '../lib/network-stack';
 import { AuthStack } from '../lib/auth-stack';
 import { StorageStack } from '../lib/storage-stack';
+import { ApiStack } from '../lib/api-stack';
 
 const app = new cdk.App();
 
 const env = {
   account: process.env.CDK_DEFAULT_ACCOUNT || process.env.AWS_ACCOUNT_ID,
-  region: 'eu-west-1', // Fixed to eu-west-1
+  region: 'eu-west-1',
 };
 
 const stackProps: cdk.StackProps = {
@@ -38,6 +39,16 @@ const storageStack = new StorageStack(app, 'HRAnalytics-Storage', {
   vpc: networkStack.vpc,
 });
 console.log('✅ Storage stack defined');
+
+const apiStack = new ApiStack(app, 'HRAnalytics-API', {
+  ...stackProps,
+  userPool: authStack.userPool,
+  tables: storageStack.tables,
+});
+console.log('✅ API stack defined');
+
+apiStack.addDependency(authStack);
+apiStack.addDependency(storageStack);
 
 console.log('📦 App synthesis complete');
 
