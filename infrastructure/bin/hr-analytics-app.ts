@@ -9,7 +9,7 @@ const app = new cdk.App();
 
 const env = {
   account: process.env.CDK_DEFAULT_ACCOUNT || process.env.AWS_ACCOUNT_ID,
-  region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
+  region: 'eu-west-1', // Fixed to eu-west-1
 };
 
 const stackProps: cdk.StackProps = {
@@ -19,11 +19,13 @@ const stackProps: cdk.StackProps = {
     Project: 'HRAnalytics',
     Environment: process.env.ENVIRONMENT || 'production',
     ManagedBy: 'CDK',
+    Region: 'eu-west-1',
   },
 };
 
-// Deploy stacks in dependency order
 console.log('🚀 Initializing HR Analytics Platform stacks...');
+console.log('📍 Region: eu-west-1');
+console.log('🏗️  Account:', env.account);
 
 const networkStack = new NetworkStack(app, 'HRAnalytics-Network', stackProps);
 console.log('✅ Network stack defined');
