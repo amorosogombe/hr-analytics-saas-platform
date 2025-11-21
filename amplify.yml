@@ -1,18 +1,18 @@
 version: 1
 frontend:
-phases:
-preBuild:
-commands:
-- cd frontend
-- npm ci
-build:
-commands:
-- npm run build
-artifacts:
-# Vite outputs production build to `dist/`
-baseDirectory: frontend/dist
-files:
-- '**/*'
-cache:
-paths:
-- frontend/node_modules/**/*
+  phases:
+    preBuild:
+      commands:
+        - cd frontend
+        - npm ci
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    # Vite outputs production build to `dist/`
+    baseDirectory: frontend/dist
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - frontend/node_modules/**/*
