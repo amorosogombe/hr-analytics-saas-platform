@@ -1,161 +1,270 @@
-# HR Analytics SaaS Platform
+# HR Analytics SaaS Application
 
-> AWS-powered multi-tenant productivity analytics platform with real-time dashboards, ETL pipelines, and collaborative insights.
+A complete, production-ready AWS-powered SaaS application for HR productivity analytics with role-based access control, QuickSight dashboard integration, and multi-tenant architecture.
 
-## 🚀 Features
+## Features
 
-- **Multi-Tenant Architecture** - Isolated data per organization with subdomain routing
-- **Real-Time Analytics** - QuickSight embedded dashboards with RLS
-- **Automated ETL** - Daily sync from Odoo & Controlio
-- **Role-Based Access** - 5-tier permission system
-- **Collaborative Comments** - Team discussions on metrics
-- **Enterprise Security** - Bank-level encryption, SOC 2 compliant
+✅ **Role-Based Authentication** - Secure login with 5-tier user hierarchy
+✅ **Multi-Tenant Architecture** - Separate organizations with isolated data
+✅ **QuickSight Integration** - Embedded analytics dashboards
+✅ **User Management** - Complete user lifecycle management
+✅ **Organization Management** - Admin panel for organization approval
+✅ **Comment System** - Collaborative commenting with approval workflow
+✅ **Responsive Design** - Beautiful UI that works on all devices
+✅ **AWS Best Practices** - Serverless, scalable, and cost-effective
 
-## 📋 Prerequisites
+## Technology Stack
 
-- AWS Account with admin access
-- Node.js 18+ and npm
-- Python 3.11+
+### Backend
+- **AWS CDK** - Infrastructure as Code
+- **Amazon Cognito** - User authentication and authorization
+- **AWS Lambda** - Serverless compute
+- **Amazon API Gateway** - RESTful API
+- **Amazon DynamoDB** - NoSQL database
+- **Amazon S3** - Object storage
+- **Amazon VPC** - Network isolation
+
+### Frontend
+- **React 18** - Modern UI framework
+- **AWS Amplify** - Frontend hosting and deployment
+- **Tailwind CSS** - Utility-first CSS framework
+- **React Router** - Client-side routing
+- **Axios** - HTTP client
+- **QuickSight Embedding SDK** - Dashboard integration
+
+## Quick Start
+
+### Prerequisites
+- AWS Account
+- Node.js 18+
 - AWS CLI configured
-- GitHub account
+- AWS CDK CLI (`npm install -g aws-cdk`)
 
-## 🏗️ Architecture
+### Installation
+
+1. **Clone or extract the project:**
+   ```bash
+   cd hr-analytics-saas
+   ```
+
+2. **Deploy backend infrastructure:**
+   ```bash
+   cd cdk-stacks
+   npm install
+   cdk bootstrap  # First time only
+   cdk deploy --all
+   ```
+
+3. **Deploy frontend:**
+   ```bash
+   cd frontend-app
+   npm install
+   # Update src/aws-config.js with CDK outputs
+   npm start  # Development
+   npm run build  # Production
+   ```
+
+4. **Deploy to Amplify:**
+   - Upload build folder to AWS Amplify console
+   - Or connect to Git repository
+
+See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for detailed instructions.
+
+## User Roles
+
+| Role | Permissions |
+|------|-------------|
+| **SuperAdmin** | System-wide access, manage organizations, all permissions |
+| **OrgAdmin** | Organization management, user approval, all metrics access |
+| **HRManager** | View all metrics, manage comments, approve comments |
+| **Supervisor** | View all metrics, comment on all metrics, approve comments |
+| **Employee** | View own metrics only, comment on own metrics |
+
+## Project Structure
+
 ```
-External APIs → Lambda ETL → S3 Data Lake → Athena → QuickSight → React App
-                     ↓
-                 DynamoDB (metadata) → AppSync GraphQL API
-                     ↓
-                 Cognito (auth)
+hr-analytics-saas/
+├── cdk-stacks/                 # AWS CDK infrastructure
+│   ├── api-stack.ts           # API Gateway + Lambda
+│   ├── auth-stack.ts          # Cognito User Pool
+│   ├── network-stack.ts       # VPC and networking
+│   └── storage-stack.ts       # DynamoDB + S3
+├── lambda-functions/          # Backend Lambda functions
+│   ├── auth/                  # Authentication handlers
+│   ├── organization/          # Organization management
+│   ├── user-management/       # User CRUD operations
+│   ├── dashboard/             # QuickSight integration
+│   └── comments/              # Comment system
+├── frontend-app/              # React frontend
+│   ├── src/
+│   │   ├── components/        # Reusable components
+│   │   ├── contexts/          # React contexts (Auth)
+│   │   ├── pages/             # Page components
+│   │   ├── App.js            # Main app component
+│   │   └── aws-config.js     # AWS configuration
+│   └── package.json
+└── DEPLOYMENT_GUIDE.md       # Detailed deployment guide
 ```
 
-## 📦 Tech Stack
+## Key Features Explained
 
-**Infrastructure:** AWS CDK (TypeScript)
-**Frontend:** React + TypeScript + Tailwind CSS
-**Backend:** Lambda (Python) + AppSync (GraphQL)
-**Database:** DynamoDB + S3 Data Lake
-**Analytics:** QuickSight + Athena + Glue
-**Auth:** Cognito User Pools
+### 1. Role-Based Access Control (RBAC)
+- Implemented at multiple levels: Cognito groups, Lambda authorization, and React routing
+- Enforced both on backend (Lambda) and frontend (React)
+- Granular permissions for viewing, commenting, and approving
 
-## 🚀 Quick Start
+### 2. Organization Management
+- Self-service organization registration
+- SuperAdmin approval workflow
+- Isolated data per organization
+- Subdomain support (configurable)
+
+### 3. User Management
+- OrgAdmin can create and approve users
+- Automatic role assignment to Cognito groups
+- Custom user attributes in Cognito
+- User approval workflow
+
+### 4. Dashboard Integration
+- Embedded QuickSight dashboards
+- Role-based dashboard access
+- Automatic embed URL generation
+- Secure token-based authentication
+
+### 5. Comment System
+- Comment on dashboard metrics
+- Approval workflow (Supervisor+)
+- Role-based permissions (view, comment, approve, delete)
+- DynamoDB single-table design for efficiency
+
+## Configuration
+
+### Environment Variables (Lambda)
+Set via CDK in API Stack:
+- `USER_POOL_ID` - Cognito User Pool ID
+- `ORGANIZATIONS_TABLE` - DynamoDB organizations table
+- `USERS_TABLE` - DynamoDB users table
+- `COMMENTS_TABLE` - DynamoDB comments table
+- `DATA_BUCKET` - S3 bucket name
+- `REGION` - AWS region
+
+### Frontend Configuration
+Edit `frontend-app/src/aws-config.js`:
+```javascript
+export const awsConfig = {
+  Auth: {
+    Cognito: {
+      userPoolId: 'YOUR_USER_POOL_ID',
+      userPoolClientId: 'YOUR_CLIENT_ID',
+      // ...
+    },
+  },
+  API: {
+    REST: {
+      'HRAnalyticsAPI': {
+        endpoint: 'YOUR_API_URL',
+        region: 'us-east-1',
+      },
+    },
+  },
+};
+```
+
+## Security
+
+- ✅ All API endpoints secured with Cognito authorizer
+- ✅ JWT token validation on every request
+- ✅ HTTPS only (enforced by Amplify/CloudFront)
+- ✅ DynamoDB encryption at rest
+- ✅ S3 bucket encryption
+- ✅ VPC isolation for Lambda functions
+- ✅ Least privilege IAM roles
+- ✅ Input validation on all endpoints
+- ✅ Password policy enforcement (12+ chars, complexity)
+
+## Monitoring
+
+### CloudWatch
+- Lambda function logs
+- API Gateway access logs
+- Error tracking and alarms
+
+### X-Ray (Optional)
+Enable distributed tracing for Lambdas
+
+### Cost Monitoring
+- Set up AWS Budgets
+- Monitor DynamoDB and Lambda usage
+- Use Cost Explorer for analysis
+
+## Development Workflow
+
+1. **Make changes to infrastructure:**
+   - Update CDK stacks
+   - Run `cdk diff` to preview changes
+   - Run `cdk deploy` to apply
+
+2. **Make changes to Lambda functions:**
+   - Edit Lambda code
+   - Deploy changes: `cdk deploy ApiStack`
+   - Test using API Gateway or Postman
+
+3. **Make changes to frontend:**
+   - Edit React components
+   - Test locally: `npm start`
+   - Build and deploy: `npm run build` then upload to Amplify
+
+## Testing
+
+### Backend
 ```bash
-# Clone repository
-git clone https://github.com/YOUR_USERNAME/hr-analytics-saas-platform.git
-cd hr-analytics-saas-platform
-
-# Install dependencies
-cd infrastructure && npm install && cd ..
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your AWS details
-
-# Deploy infrastructure
-cd infrastructure
-npm run deploy
-
-# Deploy frontend
-cd ../frontend
-npm install
-npm run build
-# Configure AWS Amplify (see docs/DEPLOYMENT.md)
+# Test Lambda functions locally
+cd lambda-functions/auth
+node -e "require('./index').handler(testEvent, {}, console.log)"
 ```
 
-## 📖 Documentation
-
-- [User Guide](docs/user-guide.md)
-- [Admin Training](docs/admin-training.md)
-- [API Documentation](docs/api-documentation.md)
-- [Deployment Guide](docs/DEPLOYMENT.md)
-- [Sales Materials](docs/sales-materials.md)
-
-## 🏢 Project Structure
-```
-├── infrastructure/     # CDK infrastructure code
-│   ├── bin/           # CDK app entry point
-│   ├── lib/           # Stack definitions
-│   ├── lambda/        # Lambda function code
-│   └── graphql/       # AppSync schema
-├── frontend/          # React application
-│   └── src/
-│       ├── components/
-│       ├── contexts/
-│       └── hooks/
-├── docs/              # Documentation
-├── scripts/           # Operational scripts
-└── tests/             # Integration tests
-```
-
-## 🔧 Development
+### Frontend
 ```bash
-# Infrastructure
-cd infrastructure
-npm run build          # Compile TypeScript
-npm run watch          # Watch mode
-npm test              # Run tests
-npx cdk synth         # Synthesize CloudFormation
-npx cdk diff          # Compare deployed stack
-
-# Frontend
-cd frontend
-npm start             # Development server
-npm test              # Run tests
-npm run build         # Production build
+cd frontend-app
+npm test
 ```
 
-## 🚀 Deployment
-
-See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed step-by-step instructions.
-
-**Quick deploy:**
+### Integration Testing
+Use Postman or curl to test API endpoints:
 ```bash
-cd infrastructure
-npx cdk deploy --all
+curl -X POST https://your-api-url/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"password"}'
 ```
 
-## 📊 Monitoring
+## Common Issues
 
-- **CloudWatch Dashboard:** Monitor all services
-- **Health Checks:** `./scripts/health-check.sh`
-- **Cost Monitoring:** `./scripts/cost-monitoring.sh`
-- **Backups:** `./scripts/backup.sh`
+See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for troubleshooting section.
 
-## 🔒 Security
+## Future Enhancements
 
-- All data encrypted at rest and in transit
-- VPC isolation for Lambda functions
-- Secrets stored in AWS Secrets Manager
-- Point-in-time recovery enabled
-- 7-year audit log retention
-
-## 💰 Cost Estimate
-
-**Starter Organization (50 users):**
-- DynamoDB: ~$5-10/month
-- Lambda: ~$10-20/month
-- S3: ~$5-10/month
-- AppSync: ~$4/month
-- VPC: ~$32/month (NAT Gateway)
-- **Total: ~$60-90/month**
-
-## 📝 License
-
-MIT License - see [LICENSE](LICENSE) file
-
-## 👥 Support
-
-- **Email:** support@yourdomain.com
-- **Documentation:** [docs/](docs/)
-- **Issues:** GitHub Issues
-
-## 🎯 Roadmap
-
-- [ ] Multi-region deployment
-- [ ] Advanced AI insights
+- [ ] Email notifications for approvals
+- [ ] Advanced analytics and reporting
+- [ ] Audit logging
+- [ ] Data export functionality
 - [ ] Mobile app (React Native)
-- [ ] Slack/Teams integration
-- [ ] White-label option
+- [ ] SSO integration (SAML/OIDC)
+- [ ] Multi-language support
+- [ ] Dark/light mode toggle
+- [ ] Advanced dashboard customization
 
----
+## Support
 
-**Built with ❤️ using AWS**
+For deployment issues or questions:
+1. Check [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)
+2. Review CloudWatch logs
+3. Check AWS service quotas
+4. Verify IAM permissions
+
+## Credits
+
+Built with AWS best practices and modern web technologies.
+
+## License
+
+Proprietary - All rights reserved

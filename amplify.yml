@@ -9,10 +9,16 @@ frontend:
       commands:
         - npm run build
   artifacts:
-    # Vite outputs production build to `dist/`
     baseDirectory: frontend/dist
     files:
       - '**/*'
   cache:
     paths:
       - frontend/node_modules/**/*
+backend:
+  phases:
+    build:
+      commands:
+        - cd infrastructure
+        - npm ci
+        - npx cdk deploy --all --require-approval never

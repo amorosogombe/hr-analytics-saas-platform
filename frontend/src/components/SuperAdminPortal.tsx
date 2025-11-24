@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useQuery, useMutation } from '@apollo/client';
+import { useQuery, useMutation } from '@apollo/client/react/hooks';
 import { AlertCircle, CheckCircle, Building2, Users, Activity, Search, Eye, Check, X, Loader } from 'lucide-react';
 import { LIST_ALL_ORGANIZATIONS, GET_SYSTEM_METRICS } from '../graphql/queries';
 import { APPROVE_ORGANIZATION, REJECT_ORGANIZATION, SUSPEND_ORGANIZATION } from '../graphql/mutations';
