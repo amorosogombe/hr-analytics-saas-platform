@@ -1,0 +1,224 @@
+
+# GraphQL Schema for HR Analytics Platform
+# Save this as: infrastructure/graphql/schema.graphql
+
+# Organizations
+type Organization {
+  organizationId: ID!
+  name: String!
+  subdomain: String!
+  status: OrgStatus!
+  tier: OrgTier!
+  adminEmail: AWSEmail!
+  userCount: Int
+  dataSourcesConfigured: Boolean
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime!
+  approvedAt: AWSDateTime
+  approvedBy: String
+}
+
+enum OrgStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum OrgTier {
+  starter
+  professional
+  enterprise
+}
+
+# System Metrics
+type SystemMetrics {
+  totalOrganizations: Int!
+  activeOrganizations: Int!
+  pendingApprovals: Int!
+  suspendedOrganizations: Int!
+  totalUsers: Int!
+  avgUsersPerOrg: Float!
+  storageUsed: String!
+  apiCallsToday: String!
+  lastUpdated: AWSDateTime!
+}
+
+# Users
+type User {
+  userId: ID!
+  organizationId: ID!
+  email: AWSEmail!
+  name: String!
+  role: UserRole!
+  department: String
+  supervisorId: ID
+  approvalStatus: ApprovalStatus!
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime!
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  HR_MANAGER
+  SUPERVISOR
+  EMPLOYEE
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+# Comments
+type Comment {
+  commentId: ID!
+  organizationId: ID!
+  metricId: String!
+  userId: ID!
+  userName: String!
+  userRole: UserRole!
+  commentText: String!
+  status: CommentStatus!
+  approvedBy: ID
+  approvalTimestamp: AWSDateTime
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime!
+}
+
+enum CommentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DELETED
+}
+
+# Data Sources
+type DataSource {
+  dataSourceId: ID!
+  organizationId: ID!
+  type: DataSourceType!
+  config: AWSJSON!
+  status: String!
+  lastSync: AWSDateTime
+  createdAt: AWSDateTime!
+}
+
+enum DataSourceType {
+  ODOO
+  CONTROLIO
+}
+
+# Input Types
+input CreateOrganizationInput {
+  name: String!
+  subdomain: String!
+  adminEmail: AWSEmail!
+  tier: OrgTier!
+  companySize: String
+  industry: String
+}
+
+input UpdateOrganizationInput {
+  name: String
+  tier: OrgTier
+  status: OrgStatus
+}
+
+input CreateUserInput {
+  organizationId: ID!
+  email: AWSEmail!
+  name: String!
+  role: UserRole!
+  department: String
+  supervisorId: ID
+}
+
+input UpdateUserInput {
+  name: String
+  role: UserRole
+  department: String
+  supervisorId: ID
+}
+
+input CreateCommentInput {
+  organizationId: ID!
+  metricId: String!
+  commentText: String!
+}
+
+# Queries
+type Query {
+  # Super Admin Queries
+  listAllOrganizations(status: OrgStatus, limit: Int, nextToken: String): OrganizationConnection!
+  getOrganization(organizationId: ID!): Organization
+  getSystemMetrics: SystemMetrics!
+  
+  # Organization Queries
+  listUsers(organizationId: ID!, role: UserRole, limit: Int, nextToken: String): UserConnection!
+  getUser(userId: ID!): User
+  
+  # Comments
+  listComments(organizationId: ID!, metricId: String!, limit: Int, nextToken: String): CommentConnection!
+  getComment(commentId: ID!): Comment
+  
+  # Data Sources
+  listDataSources(organizationId: ID!): [DataSource!]!
+  getDataSource(dataSourceId: ID!): DataSource
+}
+
+# Mutations
+type Mutation {
+  # Super Admin Mutations
+  createOrganization(input: CreateOrganizationInput!): Organization!
+  approveOrganization(organizationId: ID!): Organization!
+  rejectOrganization(organizationId: ID!, reason: String): Boolean!
+  suspendOrganization(organizationId: ID!, reason: String!): Organization!
+  deleteOrganization(organizationId: ID!): Boolean!
+  
+  # User Management
+  createUser(input: CreateUserInput!): User!
+  approveUser(userId: ID!): User!
+  rejectUser(userId: ID!, reason: String): Boolean!
+  updateUser(userId: ID!, input: UpdateUserInput!): User!
+  deleteUser(userId: ID!): Boolean!
+  
+  # Comments
+  createComment(input: CreateCommentInput!): Comment!
+  approveComment(commentId: ID!): Comment!
+  rejectComment(commentId: ID!): Comment!
+  deleteComment(commentId: ID!): Boolean!
+}
+
+# Subscriptions
+type Subscription {
+  onOrganizationApproved: Organization
+    @aws_subscribe(mutations: ["approveOrganization"])
+  
+  onUserApproved(organizationId: ID!): User
+    @aws_subscribe(mutations: ["approveUser"])
+  
+  onCommentCreated(organizationId: ID!, metricId: String!): Comment
+    @aws_subscribe(mutations: ["createComment"])
+  
+  onCommentApproved(organizationId: ID!, metricId: String!): Comment
+    @aws_subscribe(mutations: ["approveComment"])
+}
+
+# Connection Types for Pagination
+type OrganizationConnection {
+  items: [Organization!]!
+  nextToken: String
+}
+
+type UserConnection {
+  items: [User!]!
+  nextToken: String
+}
+
+type CommentConnection {
+  items: [Comment!]!
+  nextToken: String
+}
+

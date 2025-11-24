@@ -1,0 +1,13 @@
+{
+  "name": "hr-analytics-lambda",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.540.0",
+    "@aws-sdk/lib-dynamodb": "^3.540.0",
+    "@aws-sdk/client-ses": "^3.540.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.540.0",
+    "@aws-sdk/client-cloudwatch": "^3.540.0",
+    "@aws-sdk/client-s3": "^3.540.0"
+  }
+}

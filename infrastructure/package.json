@@ -1,0 +1,39 @@
+{
+  "name": "hr-analytics-infrastructure",
+  "version": "1.0.0",
+  "description": "AWS CDK infrastructure for HR Analytics SaaS platform",
+  "bin": {
+    "hr-analytics-app": "bin/hr-analytics-app.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "cdk": "cdk",
+    "deploy": "cdk deploy --all --require-approval never",
+    "deploy:network": "cdk deploy HRAnalytics-Network",
+    "deploy:auth": "cdk deploy HRAnalytics-Auth",
+    "deploy:storage": "cdk deploy HRAnalytics-Storage",
+    "deploy:compute": "cdk deploy HRAnalytics-Compute",
+    "deploy:analytics": "cdk deploy HRAnalytics-Analytics",
+    "deploy:api": "cdk deploy HRAnalytics-Api",
+    "deploy:monitoring": "cdk deploy HRAnalytics-Monitoring",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "destroy": "cdk destroy --all"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "20.1.0",
+    "aws-cdk": "^2.1033.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.1",
+    "typescript": "~5.0.4"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.225.0",
+    "constructs": "^10.0.0",
+    "source-map-support": "^0.5.21"
+  }
+}
