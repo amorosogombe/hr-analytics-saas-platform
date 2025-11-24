@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production
+build/
+dist/
+
+# CDK
+cdk.out/
+*.js.map
+*.d.ts
+!jest.config.js
+.cdk.staging/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# AWS
+.aws-sam/
+.aws/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+*.log
+
+# Misc
+.cache/
+.temp/
+.tmp/
+
+# CDK Context
+cdk.context.json
+
+# Lambda
+lambda-functions/*/node_modules/
+lambda-functions/*/package-lock.json
+
+# Frontend
+frontend-app/node_modules/
+frontend-app/build/

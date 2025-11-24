@@ -1,0 +1,10 @@
+{
+  "name": "dashboard-function",
+  "version": "1.0.0",
+  "description": "Dashboard Service Lambda function",
+  "main": "index.js",
+  "dependencies": {
+    "aws-sdk": "^2.1500.0",
+    "@aws-sdk/client-quicksight": "^3.450.0"
+  }
+}
