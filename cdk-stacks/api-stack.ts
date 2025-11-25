@@ -54,7 +54,7 @@ export class ApiStack extends cdk.Stack {
       resources: [props.userPool.userPoolArn],
     }));
 
-    // Grant QuickSight permissions
+    // Grant QuickSight permissions - UPDATED with more permissions
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       actions: [
         'quicksight:GenerateEmbedUrlForRegisteredUser',
@@ -62,6 +62,9 @@ export class ApiStack extends cdk.Stack {
         'quicksight:GetDashboardEmbedUrl',
         'quicksight:DescribeDashboard',
         'quicksight:ListDashboards',
+        'quicksight:DescribeUser',
+        'quicksight:RegisterUser',
+        'quicksight:GetAuthCode',
       ],
       resources: ['*'],
     }));
@@ -107,11 +110,15 @@ export class ApiStack extends cdk.Stack {
       memorySize: 512,
     });
 
+    // UPDATED: QuickSight Dashboard Function - now points to quicksight directory
     const dashboardFunction = new lambda.Function(this, 'DashboardFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda-functions/dashboard')),
-      environment: lambdaEnvironment,
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda-functions/quicksight')),
+      environment: {
+        ...lambdaEnvironment,
+        AWS_ACCOUNT_ID: this.account,
+      },
       role: lambdaRole,
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
@@ -236,16 +243,28 @@ export class ApiStack extends cdk.Stack {
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
-    // Dashboard endpoints
+    // UPDATED: Dashboard endpoints - now using QuickSight Lambda
+    // Changed from POST /dashboards/embed to GET /dashboards/embed-url (with query param)
     const dashboards = this.api.root.addResource('dashboards');
-    const dashboardEmbed = dashboards.addResource('embed');
-    dashboardEmbed.addMethod('POST', new apigateway.LambdaIntegration(dashboardFunction), {
+    
+    const dashboardEmbedUrl = dashboards.addResource('embed-url');
+    dashboardEmbedUrl.addMethod('GET', new apigateway.LambdaIntegration(dashboardFunction), {
       authorizer: this.authorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
+      requestParameters: {
+        'method.request.querystring.dashboard': false,
+      },
     });
 
     const dashboardList = dashboards.addResource('list');
     dashboardList.addMethod('GET', new apigateway.LambdaIntegration(dashboardFunction), {
+      authorizer: this.authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+    });
+
+    // Keep the old /dashboards/embed endpoint for backward compatibility (optional)
+    const dashboardEmbed = dashboards.addResource('embed');
+    dashboardEmbed.addMethod('POST', new apigateway.LambdaIntegration(dashboardFunction), {
       authorizer: this.authorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
@@ -292,6 +311,11 @@ export class ApiStack extends cdk.Stack {
       value: this.api.url,
       description: 'API Gateway URL',
       exportName: 'HRAnalytics-ApiUrl',
+    });
+
+    new cdk.CfnOutput(this, 'DashboardFunctionName', {
+      value: dashboardFunction.functionName,
+      description: 'QuickSight Dashboard Lambda Function Name',
     });
 
     console.log('✅ API Gateway and Lambda functions created successfully');
