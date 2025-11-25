@@ -3,17 +3,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { APP_CONFIG } from '../aws-config';
 import axios from 'axios';
-import { embedDashboard } from 'amazon-quicksight-embedding-sdk';
 
 export default function DashboardPage() {
-  const { user, canViewAllMetrics } = useAuth();
+  const { user } = useAuth();
   const [dashboards, setDashboards] = useState([]);
   const [selectedDashboard, setSelectedDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [embedUrl, setEmbedUrl] = useState(null);
-  const [permissions, setPermissions] = useState(null);
   const dashboardContainerRef = useRef(null);
+  const embeddedDashboardRef = useRef(null);
 
   useEffect(() => {
     loadDashboards();
@@ -23,6 +21,13 @@ export default function DashboardPage() {
     if (selectedDashboard) {
       loadDashboardEmbed();
     }
+    
+    // Cleanup previous embed when changing dashboards
+    return () => {
+      if (dashboardContainerRef.current) {
+        dashboardContainerRef.current.innerHTML = '';
+      }
+    };
   }, [selectedDashboard]);
 
   const loadDashboards = async () => {
@@ -35,13 +40,14 @@ export default function DashboardPage() {
         },
       });
 
+      console.log('Dashboards loaded:', response.data);
       setDashboards(response.data.dashboards);
       if (response.data.dashboards.length > 0) {
         setSelectedDashboard(response.data.dashboards[0]);
       }
     } catch (err) {
       console.error('Error loading dashboards:', err);
-      setError('Failed to load dashboards');
+      setError('Failed to load dashboards: ' + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
     }
@@ -51,11 +57,17 @@ export default function DashboardPage() {
     try {
       setLoading(true);
       setError('');
-      
+
+      // Clear previous embed
+      if (dashboardContainerRef.current) {
+        dashboardContainerRef.current.innerHTML = '';
+      }
+
       const session = await fetchAuthSession();
-      const response = await axios.post(
-        `${APP_CONFIG.apiUrl}/dashboards/embed`,
-        { dashboardId: selectedDashboard.id },
+      
+      // Use the new GET endpoint with dashboard key
+      const response = await axios.get(
+        `${APP_CONFIG.apiUrl}/dashboards/embed-url?dashboard=${selectedDashboard.key}`,
         {
           headers: {
             Authorization: `Bearer ${session.tokens.idToken}`,
@@ -63,35 +75,47 @@ export default function DashboardPage() {
         }
       );
 
-      setEmbedUrl(response.data.embedUrl);
-      setPermissions(response.data.permissions);
+      console.log('Embed URL response:', response.data);
 
-      // Embed QuickSight dashboard
+      // Check if QuickSight SDK is loaded
+      if (!window.QuickSightEmbedding) {
+        throw new Error('QuickSight SDK not loaded. Please refresh the page.');
+      }
+
+      // Embed QuickSight dashboard using the SDK
       if (dashboardContainerRef.current) {
-        const embedOptions = {
+        const options = {
           url: response.data.embedUrl,
           container: dashboardContainerRef.current,
           height: '800px',
           width: '100%',
-          locale: 'en-US',
+          scrolling: 'no',
           footerPaddingEnabled: true,
         };
 
-        embedDashboard(embedOptions);
+        console.log('Embedding dashboard with options:', options);
+        const dashboard = window.QuickSightEmbedding.embedDashboard(options);
+        embeddedDashboardRef.current = dashboard;
+
+        // Add event listeners
+        dashboard.on('error', (error) => {
+          console.error('Dashboard embed error:', error);
+          setError('Dashboard failed to load: ' + error.message);
+        });
+
+        dashboard.on('load', () => {
+          console.log('Dashboard loaded successfully');
+        });
       }
     } catch (err) {
       console.error('Error loading dashboard embed:', err);
-      if (err.response?.data?.code === 'QUICKSIGHT_USER_NOT_FOUND') {
-        setError('Your QuickSight user account needs to be set up. Please contact your administrator.');
-      } else {
-        setError('Failed to load dashboard. ' + (err.response?.data?.error || err.message));
-      }
+      setError('Failed to load dashboard: ' + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading && !embedUrl) {
+  if (loading && dashboards.length === 0) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
@@ -115,60 +139,29 @@ export default function DashboardPage() {
             <span className="px-3 py-1 bg-white/20 rounded-full text-sm text-white">
               {user.role || 'User'}
             </span>
-            <span className="px-3 py-1 bg-white/20 rounded-full text-sm text-white">
-              {user.organizationId || 'No Organization'}
-            </span>
+            {user.organizationId && (
+              <span className="px-3 py-1 bg-white/20 rounded-full text-sm text-white">
+                {user.organizationId}
+              </span>
+            )}
           </div>
         )}
       </div>
-
-      {/* Permissions Info */}
-      {permissions && (
-        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-          <h3 className="text-sm font-semibold text-slate-300 mb-2">Your Dashboard Permissions:</h3>
-          <div className="flex flex-wrap gap-3">
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${permissions.canView === 'all' ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
-              <span className="text-sm text-slate-400">
-                View: {permissions.canView === 'all' ? 'All Metrics' : 'Own Metrics Only'}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${permissions.canComment === 'all' ? 'bg-green-500' : permissions.canComment === 'own' ? 'bg-yellow-500' : 'bg-red-500'}`}></span>
-              <span className="text-sm text-slate-400">
-                Comment: {permissions.canComment === 'all' ? 'All Metrics' : permissions.canComment === 'own' ? 'Own Metrics' : 'None'}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${permissions.canApprove === 'all' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-              <span className="text-sm text-slate-400">
-                Approve Comments: {permissions.canApprove === 'all' ? 'Yes' : 'No'}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${permissions.canDelete === 'all' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-              <span className="text-sm text-slate-400">
-                Delete Comments: {permissions.canDelete === 'all' ? 'Yes' : 'No'}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Dashboard Selector */}
       {dashboards.length > 1 && (
         <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
           <label className="block text-sm font-medium text-slate-300 mb-2">Select Dashboard:</label>
           <select
-            value={selectedDashboard?.id || ''}
+            value={selectedDashboard?.key || ''}
             onChange={(e) => {
-              const dashboard = dashboards.find(d => d.id === e.target.value);
+              const dashboard = dashboards.find(d => d.key === e.target.value);
               setSelectedDashboard(dashboard);
             }}
             className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
           >
             {dashboards.map(dashboard => (
-              <option key={dashboard.id} value={dashboard.id}>
+              <option key={dashboard.key} value={dashboard.key}>
                 {dashboard.name}
               </option>
             ))}
@@ -191,29 +184,36 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Loading Indicator */}
+      {loading && selectedDashboard && (
+        <div className="bg-slate-800 rounded-lg border border-slate-700 p-8">
+          <div className="flex items-center justify-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500 mr-4"></div>
+            <p className="text-slate-400">Loading {selectedDashboard.name}...</p>
+          </div>
+        </div>
+      )}
+
       {/* QuickSight Dashboard Container */}
       {selectedDashboard && !error && (
         <div className="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
           <div className="p-4 border-b border-slate-700">
             <h2 className="text-xl font-semibold text-white">{selectedDashboard.name}</h2>
-            {selectedDashboard.description && (
-              <p className="text-slate-400 text-sm mt-1">{selectedDashboard.description}</p>
-            )}
           </div>
-          <div 
+          <div
             ref={dashboardContainerRef}
             className="w-full"
-            style={{ minHeight: '800px' }}
+            style={{ minHeight: '800px', backgroundColor: '#1e293b' }}
           />
         </div>
       )}
 
       {/* Help Text */}
-      {!canViewAllMetrics() && (
-        <div className="bg-blue-500/10 border border-blue-500/50 p-4 rounded-lg">
-          <p className="text-blue-400 text-sm">
-            <strong>Note:</strong> As an employee, you can only view and comment on your own metrics. 
-            Contact your supervisor or HR manager for access to additional metrics.
+      {dashboards.length === 0 && !loading && (
+        <div className="bg-yellow-500/10 border border-yellow-500/50 p-4 rounded-lg">
+          <p className="text-yellow-400 text-sm">
+            <strong>No Dashboards Available:</strong> You don't have access to any dashboards yet.
+            Contact your administrator for access.
           </p>
         </div>
       )}
