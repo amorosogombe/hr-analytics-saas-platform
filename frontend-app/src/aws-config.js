@@ -1,11 +1,10 @@
 // src/aws-config.js
-// Replace these values with your actual AWS resource IDs from CDK outputs
-
+// AWS configuration with actual resource values from CDK deployment
 export const awsConfig = {
   Auth: {
     Cognito: {
-      userPoolId: 'YOUR_USER_POOL_ID', // From AuthStack output
-      userPoolClientId: 'YOUR_USER_POOL_CLIENT_ID', // From AuthStack output
+      userPoolId: process.env.REACT_APP_USER_POOL_ID || 'eu-west-1_uEbTONYVT',
+      userPoolClientId: process.env.REACT_APP_USER_POOL_CLIENT_ID || '1ranm65v7jnt1f3s9i7m6rug00',
       loginWith: {
         email: true,
       },
@@ -16,7 +15,7 @@ export const awsConfig = {
         },
       },
       passwordFormat: {
-        minLength: 12,
+        minLength: 8,
         requireLowercase: true,
         requireUppercase: true,
         requireNumbers: true,
@@ -27,18 +26,18 @@ export const awsConfig = {
   API: {
     REST: {
       'HRAnalyticsAPI': {
-        endpoint: 'YOUR_API_GATEWAY_URL', // From ApiStack output
-        region: 'us-east-1', // Your AWS region
+        endpoint: process.env.REACT_APP_API_URL || 'https://1n8ay3my8e.execute-api.eu-west-1.amazonaws.com/prod',
+        region: process.env.REACT_APP_AWS_REGION || 'eu-west-1',
       },
     },
   },
 };
 
 export const APP_CONFIG = {
-  apiUrl: 'YOUR_API_GATEWAY_URL',
-  region: 'us-east-1',
+  apiUrl: process.env.REACT_APP_API_URL || 'https://1n8ay3my8e.execute-api.eu-west-1.amazonaws.com/prod',
+  region: process.env.REACT_APP_AWS_REGION || 'eu-west-1',
   quicksightDashboards: {
-    controlio: 'YOUR_CONTROLIO_DASHBOARD_ID',
-    hrProductivity: 'YOUR_HR_PRODUCTIVITY_DASHBOARD_ID',
+    controlio: process.env.REACT_APP_CONTROLIO_DASHBOARD_ID || '',
+    hrProductivity: process.env.REACT_APP_HR_PRODUCTIVITY_DASHBOARD_ID || '',
   },
 };
