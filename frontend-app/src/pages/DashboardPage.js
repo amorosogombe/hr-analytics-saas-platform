@@ -161,40 +161,48 @@ function DashboardPage() {
       }
       container.innerHTML = '';
 
-      // Create embedding context (v2 API) - IT RETURNS A PROMISE!
+      // Create embedding context (v2 API) - MUST AWAIT!
       console.log('Creating QuickSight embedding context...');
-      const embeddingContext = await window.QuickSightEmbedding.createEmbeddingContext();
+      const embeddingContext = await window.QuickSightEmbedding.createEmbeddingContext({
+        onChange: (changeEvent) => {
+          console.log('Dashboard change event:', changeEvent);
+          if (changeEvent.eventLevel === 'ERROR') {
+            console.error('Dashboard error:', changeEvent);
+            setError(`Dashboard error: ${changeEvent.message || 'Unknown error'}`);
+          }
+        }
+      });
 
       // Embed dashboard options
-      const options = {
+      const frameOptions = {
         url: data.embedUrl,
         container: container,
         height: '800px',
         width: '100%',
         scrolling: 'no',
-        footerPaddingEnabled: true,
-        printEnabled: false,
-        undoRedoDisabled: false,
-        resetDisabled: false
+      };
+
+      const contentOptions = {
+        toolbarOptions: {
+          export: false,
+          undoRedo: false,
+          reset: false,
+        },
+        attributionOptions: {
+          overlayContent: false,
+        },
       };
 
       console.log('Embedding dashboard...');
 
-      // Use v2 API - embedDashboard returns a Promise
-      const embeddedDash = await embeddingContext.embedDashboard(options);
+      // Use v2 API - embedDashboard returns the experience frame
+      const dashboardExperience = await embeddingContext.embedDashboard(
+        frameOptions,
+        contentOptions
+      );
       
       console.log('✅ Dashboard embedded successfully!');
-      setEmbeddedDashboard(embeddedDash);
-
-      // Add event listeners
-      embeddedDash.on('error', (event) => {
-        console.error('❌ Dashboard error event:', event);
-        setError('Error loading dashboard. Please try again.');
-      });
-
-      embeddedDash.on('CONTENT_LOADED', () => {
-        console.log('🎉 Dashboard content loaded successfully!');
-      });
+      setEmbeddedDashboard(dashboardExperience);
 
     } catch (err) {
       console.error('❌ Error loading dashboard embed:', err);
