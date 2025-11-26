@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { APP_CONFIG } from '../aws-config';
 import { useNavigate } from 'react-router-dom';
-import { Auth } from 'aws-amplify';
+import { fetchAuthSession } from 'aws-amplify/auth';
 
 function DashboardPage() {
   const { user } = useAuth();
@@ -26,9 +26,13 @@ function DashboardPage() {
           return;
         }
 
-        // Get current session directly from Amplify
-        const session = await Auth.currentSession();
-        const token = session.getIdToken().getJwtToken();
+        // Get current session using Amplify v6 syntax
+        const session = await fetchAuthSession();
+        const token = session.tokens?.idToken?.toString();
+        
+        if (!token) {
+          throw new Error('No auth token in session');
+        }
         
         console.log('✅ Auth token retrieved successfully');
         setAuthToken(token);
