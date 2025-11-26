@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { APP_CONFIG } from '../aws-config';  // ✅ KEEP THIS
+import { useAuth } from '../contexts/AuthContext';
+import { APP_CONFIG } from '../aws-config';
 
 function DashboardPage() {
   const { user } = useAuth();
