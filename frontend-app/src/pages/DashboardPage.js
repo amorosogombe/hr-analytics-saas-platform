@@ -161,7 +161,7 @@ function DashboardPage() {
       }
       container.innerHTML = '';
 
-      // Create embedding context (v2 API) - returns a Promise!
+      // Create embedding context (v2 API) - IT RETURNS A PROMISE!
       console.log('Creating QuickSight embedding context...');
       const embeddingContext = await window.QuickSightEmbedding.createEmbeddingContext();
 
@@ -205,9 +205,9 @@ function DashboardPage() {
   // Show loading while getting auth token
   if (!authToken) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64 bg-white">
         <div className="space-y-4 text-center">
-          <div className="text-gray-600">Initializing authentication...</div>
+          <div className="text-gray-700">Initializing authentication...</div>
           {error && (
             <div className="text-red-600 text-sm">{error}</div>
           )}
@@ -218,8 +218,8 @@ function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-600">Loading dashboards...</div>
+      <div className="flex items-center justify-center h-64 bg-white">
+        <div className="text-gray-700">Loading dashboards...</div>
       </div>
     );
   }
@@ -259,40 +259,42 @@ function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Analytics Dashboard</h1>
-        
-        {dashboards.length > 1 && (
-          <select
-            value={selectedDashboard?.key || ''}
-            onChange={(e) => {
-              const dashboard = dashboards.find(d => d.key === e.target.value);
-              setSelectedDashboard(dashboard);
-            }}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            {dashboards.map((dashboard) => (
-              <option key={dashboard.key} value={dashboard.key}>
-                {dashboard.name}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-
-      {error && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-          <p className="text-yellow-800 text-sm">{error}</p>
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex items-center justify-between bg-white p-4 rounded-lg shadow">
+          <h1 className="text-3xl font-bold text-gray-900">Analytics Dashboard</h1>
+          
+          {dashboards.length > 1 && (
+            <select
+              value={selectedDashboard?.key || ''}
+              onChange={(e) => {
+                const dashboard = dashboards.find(d => d.key === e.target.value);
+                setSelectedDashboard(dashboard);
+              }}
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-900 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              {dashboards.map((dashboard) => (
+                <option key={dashboard.key} value={dashboard.key}>
+                  {dashboard.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
-      )}
 
-      <div className="bg-white rounded-lg shadow-lg p-2">
-        <div 
-          id="dashboard-container" 
-          className="w-full"
-          style={{ minHeight: '800px' }}
-        />
+        {error && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <p className="text-yellow-800 text-sm">{error}</p>
+          </div>
+        )}
+
+        <div className="bg-white rounded-lg shadow-lg p-2">
+          <div 
+            id="dashboard-container" 
+            className="w-full bg-white"
+            style={{ minHeight: '800px' }}
+          />
+        </div>
       </div>
     </div>
   );
