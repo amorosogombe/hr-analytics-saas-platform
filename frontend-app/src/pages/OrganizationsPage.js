@@ -8,6 +8,8 @@ export default function OrganizationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [editingOrg, setEditingOrg] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
   useEffect(() => {
     loadOrganizations();
@@ -52,8 +54,70 @@ export default function OrganizationsPage() {
     }
   };
 
+  const handleSuspend = async (organizationId, currentStatus) => {
+    const newStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
+    const action = currentStatus === 'suspended' ? 'reactivate' : 'suspend';
+    
+    if (!window.confirm(`Are you sure you want to ${action} this organization?`)) {
+      return;
+    }
+
+    try {
+      const session = await fetchAuthSession();
+      await axios.put(
+        `${APP_CONFIG.apiUrl}/organizations/${organizationId}`,
+        { status: newStatus },
+        {
+          headers: {
+            Authorization: `Bearer ${session.tokens.idToken}`,
+          },
+        }
+      );
+      setSuccessMessage(`Organization ${action}ed successfully`);
+      loadOrganizations();
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      console.error(`Error ${action}ing organization:`, err);
+      setError(`Failed to ${action} organization`);
+    }
+  };
+
+  const handleEdit = (org) => {
+    setEditingOrg({ ...org });
+    setShowEditModal(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingOrg) return;
+
+    try {
+      const session = await fetchAuthSession();
+      await axios.put(
+        `${APP_CONFIG.apiUrl}/organizations/${editingOrg.organizationId}`,
+        {
+          name: editingOrg.name,
+          subdomain: editingOrg.subdomain,
+          adminEmail: editingOrg.adminEmail,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${session.tokens.idToken}`,
+          },
+        }
+      );
+      setSuccessMessage('Organization updated successfully');
+      setShowEditModal(false);
+      setEditingOrg(null);
+      loadOrganizations();
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      console.error('Error updating organization:', err);
+      setError('Failed to update organization');
+    }
+  };
+
   const handleDelete = async (organizationId) => {
-    if (!window.confirm('Are you sure you want to delete this organization?')) {
+    if (!window.confirm('Are you sure you want to delete this organization? This action cannot be undone.')) {
       return;
     }
 
@@ -71,6 +135,11 @@ export default function OrganizationsPage() {
       console.error('Error deleting organization:', err);
       setError('Failed to delete organization');
     }
+  };
+
+  const handleViewAnalytics = (org) => {
+    // Placeholder for analytics view
+    alert(`Analytics for ${org.name}\n\nThis feature will display:\n- User activity\n- Dashboard usage\n- Performance metrics\n- Reports generated\n\n(Feature coming soon!)`);
   };
 
   const getStatusBadge = (status) => {
@@ -162,6 +231,31 @@ export default function OrganizationsPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2">
+                      {/* View Analytics Button */}
+                      <button
+                        onClick={() => handleViewAnalytics(org)}
+                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors flex items-center gap-1"
+                        title="View Analytics"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        Analytics
+                      </button>
+
+                      {/* Edit Button */}
+                      <button
+                        onClick={() => handleEdit(org)}
+                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition-colors flex items-center gap-1"
+                        title="Edit Organization"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        Edit
+                      </button>
+
+                      {/* Approve Button (for pending) */}
                       {org.status === 'pending_approval' && (
                         <button
                           onClick={() => handleApprove(org.organizationId)}
@@ -170,6 +264,22 @@ export default function OrganizationsPage() {
                           Approve
                         </button>
                       )}
+
+                      {/* Suspend/Reactivate Button */}
+                      {org.status !== 'pending_approval' && (
+                        <button
+                          onClick={() => handleSuspend(org.organizationId, org.status)}
+                          className={`px-3 py-1 ${
+                            org.status === 'suspended'
+                              ? 'bg-green-600 hover:bg-green-700'
+                              : 'bg-orange-600 hover:bg-orange-700'
+                          } text-white rounded transition-colors`}
+                        >
+                          {org.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+                        </button>
+                      )}
+
+                      {/* Delete Button */}
                       <button
                         onClick={() => handleDelete(org.organizationId)}
                         className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
@@ -196,10 +306,87 @@ export default function OrganizationsPage() {
           <strong className="text-slate-300">Total Organizations:</strong> {organizations.length}
         </p>
         <p className="text-sm text-slate-400 mt-1">
+          <strong className="text-slate-300">Active:</strong>{' '}
+          {organizations.filter(o => o.status === 'active').length}
+        </p>
+        <p className="text-sm text-slate-400 mt-1">
           <strong className="text-slate-300">Pending Approval:</strong>{' '}
           {organizations.filter(o => o.status === 'pending_approval').length}
         </p>
+        <p className="text-sm text-slate-400 mt-1">
+          <strong className="text-slate-300">Suspended:</strong>{' '}
+          {organizations.filter(o => o.status === 'suspended').length}
+        </p>
       </div>
+
+      {/* Edit Modal */}
+      {showEditModal && editingOrg && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-lg p-6 w-full max-w-md border border-slate-700">
+            <h2 className="text-2xl font-bold text-white mb-4">Edit Organization</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">
+                  Organization Name
+                </label>
+                <input
+                  type="text"
+                  value={editingOrg.name}
+                  onChange={(e) => setEditingOrg({ ...editingOrg, name: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">
+                  Subdomain
+                </label>
+                <input
+                  type="text"
+                  value={editingOrg.subdomain}
+                  onChange={(e) => setEditingOrg({ ...editingOrg, subdomain: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">
+                  Admin Email
+                </label>
+                <input
+                  type="email"
+                  value={editingOrg.adminEmail}
+                  onChange={(e) => setEditingOrg({ ...editingOrg, adminEmail: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div className="text-xs text-slate-400">
+                <strong>ID:</strong> {editingOrg.organizationId}
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-2 mt-6">
+              <button
+                onClick={() => {
+                  setShowEditModal(false);
+                  setEditingOrg(null);
+                }}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

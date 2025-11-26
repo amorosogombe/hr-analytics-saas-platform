@@ -55,6 +55,18 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     try {
       setError(null);
+      
+      // First, try to sign out any existing session
+      try {
+        await signOut({ global: true });
+      } catch (signOutError) {
+        console.log('No existing session to sign out:', signOutError);
+      }
+      
+      // Clear all storage to ensure clean state
+      clearAllStorage();
+      
+      // Now sign in
       const { isSignedIn } = await signIn({ username: email, password });
       
       if (isSignedIn) {
@@ -94,12 +106,65 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const clearAllStorage = () => {
+    // Clear localStorage
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      // Remove all Amplify/Cognito related keys
+      if (key && (
+        key.includes('CognitoIdentityServiceProvider') ||
+        key.includes('amplify') ||
+        key.includes('aws') ||
+        key.startsWith('@@auth')
+      )) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    
+    // Clear sessionStorage
+    const sessionKeysToRemove = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key && (
+        key.includes('CognitoIdentityServiceProvider') ||
+        key.includes('amplify') ||
+        key.includes('aws') ||
+        key.startsWith('@@auth')
+      )) {
+        sessionKeysToRemove.push(key);
+      }
+    }
+    sessionKeysToRemove.forEach(key => sessionStorage.removeItem(key));
+    
+    console.log('All auth storage cleared');
+  };
+
   const logout = async () => {
     try {
-      await signOut();
+      console.log('Logging out...');
+      
+      // Sign out from Cognito with global flag to invalidate all tokens
+      await signOut({ global: true });
+      
+      // Clear all storage
+      clearAllStorage();
+      
+      // Clear user state
       setUser(null);
+      
+      console.log('Logout complete');
+      
+      // Small delay to ensure everything is cleared
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
     } catch (err) {
       console.error('Logout error:', err);
+      
+      // Even if signOut fails, clear storage and user state
+      clearAllStorage();
+      setUser(null);
     }
   };
 
@@ -141,5 +206,5 @@ export const AuthProvider = ({ children }) => {
     canDeleteComments,
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 };
