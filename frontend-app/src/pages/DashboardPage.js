@@ -1,18 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { APP_CONFIG } from '../aws-config';
+import { useNavigate } from 'react-router-dom';
 
 function DashboardPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [dashboards, setDashboards] = useState([]);
   const [selectedDashboard, setSelectedDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [embeddedDashboard, setEmbeddedDashboard] = useState(null);
 
+  // Check authentication
   useEffect(() => {
+    if (!user) {
+      console.log('User not authenticated, redirecting to login...');
+      navigate('/login');
+      return;
+    }
+    
+    if (!user.signInUserSession) {
+      console.log('User session not ready yet...');
+      return;
+    }
+
     loadDashboards();
-  }, []);
+  }, [user, navigate]);
 
   useEffect(() => {
     if (selectedDashboard) {
@@ -32,6 +46,12 @@ function DashboardPage() {
   const loadDashboards = async () => {
     try {
       setLoading(true);
+      
+      // Double-check user and session exist
+      if (!user || !user.signInUserSession || !user.signInUserSession.idToken) {
+        throw new Error('User not authenticated');
+      }
+
       const token = user.signInUserSession.idToken.jwtToken;
       
       const response = await fetch(`${APP_CONFIG.apiUrl}/dashboards/list`, {
@@ -73,6 +93,11 @@ function DashboardPage() {
       // Check if createEmbeddingContext exists (v2 API)
       if (!window.QuickSightEmbedding.createEmbeddingContext) {
         throw new Error('QuickSight SDK v2 API not available');
+      }
+
+      // Check user authentication
+      if (!user || !user.signInUserSession || !user.signInUserSession.idToken) {
+        throw new Error('User not authenticated');
       }
 
       const token = user.signInUserSession.idToken.jwtToken;
@@ -123,18 +148,18 @@ function DashboardPage() {
       console.log('Embedding dashboard with options:', options);
 
       // Use v2 API - embedDashboard returns a Promise
-      const dashboard = await embeddingContext.embedDashboard(options);
+      const embeddedDash = await embeddingContext.embedDashboard(options);
       
-      console.log('Dashboard embedded successfully:', dashboard);
-      setEmbeddedDashboard(dashboard);
+      console.log('Dashboard embedded successfully:', embeddedDash);
+      setEmbeddedDashboard(embeddedDash);
 
       // Add event listeners
-      dashboard.on('error', (event) => {
+      embeddedDash.on('error', (event) => {
         console.error('Dashboard error event:', event);
         setError('Error loading dashboard. Please try again.');
       });
 
-      dashboard.on('CONTENT_LOADED', () => {
+      embeddedDash.on('CONTENT_LOADED', () => {
         console.log('Dashboard content loaded');
       });
 
@@ -143,6 +168,15 @@ function DashboardPage() {
       setError(err.message || 'Failed to load dashboard');
     }
   };
+
+  // Show loading while checking authentication
+  if (!user || !user.signInUserSession) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-600">Checking authentication...</div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
