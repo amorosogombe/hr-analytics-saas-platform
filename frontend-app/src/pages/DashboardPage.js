@@ -11,28 +11,50 @@ function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [embeddedDashboard, setEmbeddedDashboard] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
-  // Check authentication
+  // Check authentication with timeout
   useEffect(() => {
-    if (!user) {
-      console.log('User not authenticated, redirecting to login...');
-      navigate('/login');
-      return;
-    }
+    let timeoutId;
     
-    if (!user.signInUserSession) {
-      console.log('User session not ready yet...');
-      return;
-    }
+    const checkAuth = () => {
+      console.log('Checking auth - user:', !!user, 'session:', !!user?.signInUserSession);
+      
+      if (!user) {
+        console.log('No user, redirecting to login...');
+        navigate('/login');
+        return;
+      }
+      
+      if (user.signInUserSession && user.signInUserSession.idToken) {
+        console.log('User session ready, loading dashboards...');
+        setAuthChecked(true);
+        loadDashboards();
+      } else {
+        console.log('User session not ready, waiting...');
+        // Set timeout to wait for session (max 5 seconds)
+        timeoutId = setTimeout(() => {
+          if (!user.signInUserSession) {
+            console.error('Session timeout - redirecting to login');
+            setError('Session expired. Please login again.');
+            setTimeout(() => navigate('/login'), 2000);
+          }
+        }, 5000);
+      }
+    };
 
-    loadDashboards();
+    checkAuth();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [user, navigate]);
 
   useEffect(() => {
-    if (selectedDashboard) {
+    if (selectedDashboard && authChecked) {
       embedDashboard(selectedDashboard);
     }
-  }, [selectedDashboard]);
+  }, [selectedDashboard, authChecked]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -46,13 +68,15 @@ function DashboardPage() {
   const loadDashboards = async () => {
     try {
       setLoading(true);
+      setError(null);
       
-      // Double-check user and session exist
+      // Triple-check session exists
       if (!user || !user.signInUserSession || !user.signInUserSession.idToken) {
-        throw new Error('User not authenticated');
+        throw new Error('User session not available');
       }
 
       const token = user.signInUserSession.idToken.jwtToken;
+      console.log('Fetching dashboards with token...');
       
       const response = await fetch(`${APP_CONFIG.apiUrl}/dashboards/list`, {
         headers: {
@@ -61,7 +85,8 @@ function DashboardPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to load dashboards: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`Failed to load dashboards: ${response.statusText} - ${errorText}`);
       }
 
       const data = await response.json();
@@ -72,6 +97,8 @@ function DashboardPage() {
       // Auto-select first dashboard
       if (data.dashboards && data.dashboards.length > 0) {
         setSelectedDashboard(data.dashboards[0]);
+      } else {
+        setError('No dashboards available');
       }
     } catch (err) {
       console.error('Error loading dashboards:', err);
@@ -97,10 +124,11 @@ function DashboardPage() {
 
       // Check user authentication
       if (!user || !user.signInUserSession || !user.signInUserSession.idToken) {
-        throw new Error('User not authenticated');
+        throw new Error('User session not available');
       }
 
       const token = user.signInUserSession.idToken.jwtToken;
+      console.log('Fetching embed URL for dashboard:', dashboard.key);
       
       // Fetch embed URL
       const response = await fetch(
@@ -113,7 +141,8 @@ function DashboardPage() {
       );
 
       if (!response.ok) {
-        throw new Error(`Failed to get embed URL: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`Failed to get embed URL: ${response.statusText} - ${errorText}`);
       }
 
       const data = await response.json();
@@ -125,11 +154,13 @@ function DashboardPage() {
 
       // Clear previous dashboard
       const container = document.getElementById('dashboard-container');
-      if (container) {
-        container.innerHTML = '';
+      if (!container) {
+        throw new Error('Dashboard container not found');
       }
+      container.innerHTML = '';
 
       // Create embedding context (v2 API)
+      console.log('Creating embedding context...');
       const embeddingContext = window.QuickSightEmbedding.createEmbeddingContext();
 
       // Embed dashboard options
@@ -160,7 +191,7 @@ function DashboardPage() {
       });
 
       embeddedDash.on('CONTENT_LOADED', () => {
-        console.log('Dashboard content loaded');
+        console.log('Dashboard content loaded successfully!');
       });
 
     } catch (err) {
@@ -170,10 +201,15 @@ function DashboardPage() {
   };
 
   // Show loading while checking authentication
-  if (!user || !user.signInUserSession) {
+  if (!authChecked) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-gray-600">Checking authentication...</div>
+        <div className="space-y-4 text-center">
+          <div className="text-gray-600">Checking authentication...</div>
+          <div className="text-sm text-gray-500">
+            If this takes too long, try refreshing the page
+          </div>
+        </div>
       </div>
     );
   }
@@ -188,15 +224,34 @@ function DashboardPage() {
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4 m-4">
         <h3 className="text-red-800 font-semibold mb-2">Error</h3>
-        <p className="text-red-600">{error}</p>
-        <button
-          onClick={loadDashboards}
-          className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-        >
-          Retry
-        </button>
+        <p className="text-red-600 mb-4">{error}</p>
+        <div className="flex gap-2">
+          <button
+            onClick={loadDashboards}
+            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Retry
+          </button>
+          <button
+            onClick={() => navigate('/login')}
+            className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+          >
+            Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (dashboards.length === 0) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 m-4">
+        <h3 className="text-yellow-800 font-semibold mb-2">No Dashboards Available</h3>
+        <p className="text-yellow-600">
+          No dashboards are configured for your account. Please contact your administrator.
+        </p>
       </div>
     );
   }
