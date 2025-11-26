@@ -161,9 +161,9 @@ function DashboardPage() {
       }
       container.innerHTML = '';
 
-      // Create embedding context (v2 API)
+      // Create embedding context (v2 API) - returns a Promise!
       console.log('Creating QuickSight embedding context...');
-      const embeddingContext = window.QuickSightEmbedding.createEmbeddingContext();
+      const embeddingContext = await window.QuickSightEmbedding.createEmbeddingContext();
 
       // Embed dashboard options
       const options = {
