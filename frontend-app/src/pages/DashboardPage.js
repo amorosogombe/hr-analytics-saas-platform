@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { APP_CONFIG } from '../aws-config';
 import { useNavigate } from 'react-router-dom';
+import { Auth } from 'aws-amplify';
 
 function DashboardPage() {
   const { user } = useAuth();
@@ -11,50 +12,49 @@ function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [embeddedDashboard, setEmbeddedDashboard] = useState(null);
-  const [authChecked, setAuthChecked] = useState(false);
+  const [authToken, setAuthToken] = useState(null);
 
-  // Check authentication with timeout
+  // Get auth token directly from Amplify
   useEffect(() => {
-    let timeoutId;
-    
-    const checkAuth = () => {
-      console.log('Checking auth - user:', !!user, 'session:', !!user?.signInUserSession);
-      
-      if (!user) {
-        console.log('No user, redirecting to login...');
-        navigate('/login');
-        return;
-      }
-      
-      if (user.signInUserSession && user.signInUserSession.idToken) {
-        console.log('User session ready, loading dashboards...');
-        setAuthChecked(true);
-        loadDashboards();
-      } else {
-        console.log('User session not ready, waiting...');
-        // Set timeout to wait for session (max 5 seconds)
-        timeoutId = setTimeout(() => {
-          if (!user.signInUserSession) {
-            console.error('Session timeout - redirecting to login');
-            setError('Session expired. Please login again.');
-            setTimeout(() => navigate('/login'), 2000);
-          }
-        }, 5000);
+    const getAuthToken = async () => {
+      try {
+        console.log('Getting auth token from Amplify...');
+        
+        if (!user) {
+          console.log('No user found, redirecting to login...');
+          navigate('/login');
+          return;
+        }
+
+        // Get current session directly from Amplify
+        const session = await Auth.currentSession();
+        const token = session.getIdToken().getJwtToken();
+        
+        console.log('✅ Auth token retrieved successfully');
+        setAuthToken(token);
+        
+      } catch (err) {
+        console.error('Failed to get auth token:', err);
+        setError('Authentication failed. Please login again.');
+        setTimeout(() => navigate('/login'), 2000);
       }
     };
 
-    checkAuth();
-
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
+    getAuthToken();
   }, [user, navigate]);
 
+  // Load dashboards once we have the token
   useEffect(() => {
-    if (selectedDashboard && authChecked) {
+    if (authToken) {
+      loadDashboards();
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    if (selectedDashboard && authToken) {
       embedDashboard(selectedDashboard);
     }
-  }, [selectedDashboard, authChecked]);
+  }, [selectedDashboard, authToken]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -70,17 +70,15 @@ function DashboardPage() {
       setLoading(true);
       setError(null);
       
-      // Triple-check session exists
-      if (!user || !user.signInUserSession || !user.signInUserSession.idToken) {
-        throw new Error('User session not available');
+      if (!authToken) {
+        throw new Error('No authentication token available');
       }
 
-      const token = user.signInUserSession.idToken.jwtToken;
-      console.log('Fetching dashboards with token...');
+      console.log('Fetching dashboards from API...');
       
       const response = await fetch(`${APP_CONFIG.apiUrl}/dashboards/list`, {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${authToken}`
         }
       });
 
@@ -90,7 +88,7 @@ function DashboardPage() {
       }
 
       const data = await response.json();
-      console.log('Dashboards loaded:', data);
+      console.log('✅ Dashboards loaded:', data);
       
       setDashboards(data.dashboards || []);
       
@@ -101,7 +99,7 @@ function DashboardPage() {
         setError('No dashboards available');
       }
     } catch (err) {
-      console.error('Error loading dashboards:', err);
+      console.error('❌ Error loading dashboards:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -111,6 +109,8 @@ function DashboardPage() {
   const embedDashboard = async (dashboard) => {
     try {
       setError(null);
+      
+      console.log('Starting dashboard embed for:', dashboard.name);
       
       // Check if QuickSight SDK is loaded
       if (!window.QuickSightEmbedding) {
@@ -122,12 +122,10 @@ function DashboardPage() {
         throw new Error('QuickSight SDK v2 API not available');
       }
 
-      // Check user authentication
-      if (!user || !user.signInUserSession || !user.signInUserSession.idToken) {
-        throw new Error('User session not available');
+      if (!authToken) {
+        throw new Error('No authentication token available');
       }
 
-      const token = user.signInUserSession.idToken.jwtToken;
       console.log('Fetching embed URL for dashboard:', dashboard.key);
       
       // Fetch embed URL
@@ -135,7 +133,7 @@ function DashboardPage() {
         `${APP_CONFIG.apiUrl}/dashboards/embed-url?dashboard=${dashboard.key}`,
         {
           headers: {
-            'Authorization': `Bearer ${token}`
+            'Authorization': `Bearer ${authToken}`
           }
         }
       );
@@ -146,7 +144,7 @@ function DashboardPage() {
       }
 
       const data = await response.json();
-      console.log('Embed URL response:', data);
+      console.log('✅ Embed URL received:', data.dashboardId);
 
       if (!data.embedUrl) {
         throw new Error('No embed URL in response');
@@ -160,7 +158,7 @@ function DashboardPage() {
       container.innerHTML = '';
 
       // Create embedding context (v2 API)
-      console.log('Creating embedding context...');
+      console.log('Creating QuickSight embedding context...');
       const embeddingContext = window.QuickSightEmbedding.createEmbeddingContext();
 
       // Embed dashboard options
@@ -176,39 +174,39 @@ function DashboardPage() {
         resetDisabled: false
       };
 
-      console.log('Embedding dashboard with options:', options);
+      console.log('Embedding dashboard...');
 
       // Use v2 API - embedDashboard returns a Promise
       const embeddedDash = await embeddingContext.embedDashboard(options);
       
-      console.log('Dashboard embedded successfully:', embeddedDash);
+      console.log('✅ Dashboard embedded successfully!');
       setEmbeddedDashboard(embeddedDash);
 
       // Add event listeners
       embeddedDash.on('error', (event) => {
-        console.error('Dashboard error event:', event);
+        console.error('❌ Dashboard error event:', event);
         setError('Error loading dashboard. Please try again.');
       });
 
       embeddedDash.on('CONTENT_LOADED', () => {
-        console.log('Dashboard content loaded successfully!');
+        console.log('🎉 Dashboard content loaded successfully!');
       });
 
     } catch (err) {
-      console.error('Error loading dashboard embed:', err);
+      console.error('❌ Error loading dashboard embed:', err);
       setError(err.message || 'Failed to load dashboard');
     }
   };
 
-  // Show loading while checking authentication
-  if (!authChecked) {
+  // Show loading while getting auth token
+  if (!authToken) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="space-y-4 text-center">
-          <div className="text-gray-600">Checking authentication...</div>
-          <div className="text-sm text-gray-500">
-            If this takes too long, try refreshing the page
-          </div>
+          <div className="text-gray-600">Initializing authentication...</div>
+          {error && (
+            <div className="text-red-600 text-sm">{error}</div>
+          )}
         </div>
       </div>
     );
@@ -222,7 +220,7 @@ function DashboardPage() {
     );
   }
 
-  if (error) {
+  if (error && dashboards.length === 0) {
     return (
       <div className="bg-red-50 border border-red-200 rounded-lg p-4 m-4">
         <h3 className="text-red-800 font-semibold mb-2">Error</h3>
@@ -257,7 +255,7 @@ function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Analytics Dashboard</h1>
         
@@ -278,6 +276,12 @@ function DashboardPage() {
           </select>
         )}
       </div>
+
+      {error && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+          <p className="text-yellow-800 text-sm">{error}</p>
+        </div>
+      )}
 
       <div className="bg-white rounded-lg shadow-lg p-2">
         <div 
