@@ -1,23 +1,22 @@
+const { 
+  CognitoIdentityProviderClient,
+  AdminGetUserCommand,
+  AdminAddUserToGroupCommand,
+  AdminDeleteUserCommand,
+  AdminUpdateUserAttributesCommand,
+} = require('@aws-sdk/client-cognito-identity-provider');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, UpdateCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
-const { CognitoIdentityProviderClient, AdminCreateUserCommand, AdminDeleteUserCommand, AdminUpdateUserAttributesCommand, AdminSetUserPasswordCommand, AdminAddUserToGroupCommand, AdminRemoveUserFromGroupCommand, AdminListGroupsForUserCommand } = require('@aws-sdk/client-cognito-identity-provider');
+const { DynamoDBDocumentClient, GetCommand, QueryCommand, PutCommand, DeleteCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
+const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.REGION });
 const dynamoClient = new DynamoDBClient({ region: process.env.REGION });
 const docClient = DynamoDBDocumentClient.from(dynamoClient);
-const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.REGION });
 
 const headers = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type,Authorization',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
   'Content-Type': 'application/json',
-};
-
-const ROLE_GROUP_MAP = {
-  'hr_manager': 'HRManagers',
-  'supervisor': 'Supervisors',
-  'employee': 'Employees',
-  'org_admin': 'OrgAdmins',
 };
 
 exports.handler = async (event) => {
@@ -27,37 +26,41 @@ exports.handler = async (event) => {
     const path = event.resource;
     const method = event.httpMethod;
 
+    // Handle OPTIONS for CORS
     if (method === 'OPTIONS') {
       return { statusCode: 200, headers, body: '' };
     }
 
-    const claims = event.requestContext.authorizer.claims;
-    const userGroups = claims['cognito:groups'] ? claims['cognito:groups'].split(',') : [];
-    const userOrgId = claims['custom:organizationId'];
-    const userEmail = claims.email;
+    // Extract user from token
+    const authHeader = event.headers.Authorization || event.headers.authorization;
+    if (!authHeader) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({ error: 'Authorization required' }),
+      };
+    }
 
+    const token = authHeader.replace('Bearer ', '');
+    const tokenPayload = decodeJWT(token);
+    const currentUserEmail = tokenPayload.email;
+    const currentUserGroups = tokenPayload['cognito:groups'] || [];
+
+    // Route: GET /users
     if (path === '/users' && method === 'GET') {
-      return await handleListUsers(event, userGroups, userOrgId);
+      return await handleListUsers(currentUserEmail, currentUserGroups);
     }
 
-    if (path === '/users' && method === 'POST') {
-      return await handleCreateUser(event, userGroups, userOrgId);
-    }
-
-    if (path === '/users/{userId}' && method === 'GET') {
-      return await handleGetUser(event, userGroups, userOrgId);
-    }
-
-    if (path === '/users/{userId}' && method === 'PUT') {
-      return await handleUpdateUser(event, userGroups, userOrgId);
-    }
-
-    if (path === '/users/{userId}' && method === 'DELETE') {
-      return await handleDeleteUser(event, userGroups, userOrgId);
-    }
-
+    // Route: POST /users/{userId}/approve
     if (path === '/users/{userId}/approve' && method === 'POST') {
-      return await handleApproveUser(event, userGroups, userOrgId, userEmail);
+      const userId = event.pathParameters.userId;
+      return await handleApproveUser(userId, currentUserEmail, currentUserGroups);
+    }
+
+    // Route: DELETE /users/{userId}
+    if (path === '/users/{userId}' && method === 'DELETE') {
+      const userId = event.pathParameters.userId;
+      return await handleDeleteUser(userId, currentUserEmail, currentUserGroups);
     }
 
     return {
@@ -75,48 +78,73 @@ exports.handler = async (event) => {
   }
 };
 
-async function handleListUsers(event, userGroups, userOrgId) {
+/**
+ * List users - OrgAdmins see their org, SuperAdmins see all
+ */
+async function handleListUsers(currentUserEmail, currentUserGroups) {
   try {
-    // Check permissions: OrgAdmins, HRManagers can list users in their org
-    if (!userGroups.includes('SuperAdmins') && 
-        !userGroups.includes('OrgAdmins') && 
-        !userGroups.includes('HRManagers')) {
+    const isSuperAdmin = currentUserGroups.includes('SuperAdmins');
+    const isOrgAdmin = currentUserGroups.includes('OrgAdmins');
+
+    if (!isSuperAdmin && !isOrgAdmin) {
       return {
         statusCode: 403,
         headers,
-        body: JSON.stringify({ error: 'Insufficient permissions' }),
+        body: JSON.stringify({ error: 'Access denied. Only admins can view users.' }),
       };
     }
 
-    const organizationId = event.queryStringParameters?.organizationId || userOrgId;
+    let users = [];
 
-    // SuperAdmins can query any org, others only their own
-    if (!userGroups.includes('SuperAdmins') && organizationId !== userOrgId) {
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({ error: 'Cannot access users from other organizations' }),
-      };
+    if (isSuperAdmin) {
+      // SuperAdmins see all users
+      const result = await docClient.send(new ScanCommand({
+        TableName: process.env.USERS_TABLE,
+      }));
+      users = result.Items || [];
+    } else {
+      // OrgAdmins see only their organization's users
+      // First, get the current user's organization
+      const currentUserResult = await docClient.send(new QueryCommand({
+        TableName: process.env.USERS_TABLE,
+        IndexName: 'EmailIndex',
+        KeyConditionExpression: 'email = :email',
+        ExpressionAttributeValues: {
+          ':email': currentUserEmail,
+        },
+      }));
+
+      if (!currentUserResult.Items || currentUserResult.Items.length === 0) {
+        return {
+          statusCode: 404,
+          headers,
+          body: JSON.stringify({ error: 'Current user not found' }),
+        };
+      }
+
+      const currentUser = currentUserResult.Items[0];
+      const organizationId = currentUser.organizationId;
+
+      // Get all users in the same organization
+      const result = await docClient.send(new QueryCommand({
+        TableName: process.env.USERS_TABLE,
+        IndexName: 'OrganizationIndex',
+        KeyConditionExpression: 'organizationId = :orgId',
+        ExpressionAttributeValues: {
+          ':orgId': organizationId,
+        },
+      }));
+
+      users = result.Items || [];
     }
-
-    const result = await docClient.send(new QueryCommand({
-      TableName: process.env.USERS_TABLE,
-      KeyConditionExpression: 'organizationId = :orgId',
-      ExpressionAttributeValues: {
-        ':orgId': organizationId,
-      },
-    }));
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({
-        users: result.Items || [],
-        count: result.Count,
-      }),
+      body: JSON.stringify({ users }),
     };
   } catch (error) {
-    console.error('List users error:', error);
+    console.error('Error listing users:', error);
     return {
       statusCode: 500,
       headers,
@@ -125,177 +153,146 @@ async function handleListUsers(event, userGroups, userOrgId) {
   }
 }
 
-async function handleCreateUser(event, userGroups, userOrgId) {
+/**
+ * Approve a user - Only OrgAdmins can approve users in their org
+ */
+async function handleApproveUser(userId, currentUserEmail, currentUserGroups) {
   try {
-    // Check permissions: OrgAdmins can create users
-    if (!userGroups.includes('SuperAdmins') && !userGroups.includes('OrgAdmins')) {
+    const isSuperAdmin = currentUserGroups.includes('SuperAdmins');
+    const isOrgAdmin = currentUserGroups.includes('OrgAdmins');
+
+    if (!isOrgAdmin && !isSuperAdmin) {
       return {
         statusCode: 403,
         headers,
-        body: JSON.stringify({ error: 'Insufficient permissions' }),
+        body: JSON.stringify({ error: 'Access denied. Only admins can approve users.' }),
       };
     }
 
-    const body = JSON.parse(event.body);
-    const { email, password, fullName, role, department, organizationId } = body;
+    // Get the user to approve
+    const userResult = await docClient.send(new GetCommand({
+      TableName: process.env.USERS_TABLE,
+      Key: { userId },
+    }));
 
-    if (!email || !password || !fullName || !role) {
+    if (!userResult.Item) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ error: 'User not found' }),
+      };
+    }
+
+    const userToApprove = userResult.Item;
+
+    // If OrgAdmin, check they're in the same organization
+    if (isOrgAdmin && !isSuperAdmin) {
+      const currentUserResult = await docClient.send(new QueryCommand({
+        TableName: process.env.USERS_TABLE,
+        IndexName: 'EmailIndex',
+        KeyConditionExpression: 'email = :email',
+        ExpressionAttributeValues: {
+          ':email': currentUserEmail,
+        },
+      }));
+
+      if (!currentUserResult.Items || currentUserResult.Items.length === 0) {
+        return {
+          statusCode: 404,
+          headers,
+          body: JSON.stringify({ error: 'Current user not found' }),
+        };
+      }
+
+      const currentUser = currentUserResult.Items[0];
+      
+      if (currentUser.organizationId !== userToApprove.organizationId) {
+        return {
+          statusCode: 403,
+          headers,
+          body: JSON.stringify({ error: 'You can only approve users in your organization' }),
+        };
+      }
+    }
+
+    // Check if already approved
+    if (userToApprove.approvalStatus === 'approved') {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'Email, password, full name, and role are required' }),
+        body: JSON.stringify({ error: 'User is already approved' }),
       };
     }
 
-    const targetOrgId = organizationId || userOrgId;
+    console.log('Approving user:', userId, 'Role:', userToApprove.role);
 
-    // Non-SuperAdmins can only create users in their own org
-    if (!userGroups.includes('SuperAdmins') && targetOrgId !== userOrgId) {
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({ error: 'Cannot create users in other organizations' }),
-      };
-    }
-
-    const userGroup = ROLE_GROUP_MAP[role] || 'Employees';
-
-    // Create user in Cognito
-    await cognitoClient.send(new AdminCreateUserCommand({
-      UserPoolId: process.env.USER_POOL_ID,
-      Username: email,
-      UserAttributes: [
-        { Name: 'email', Value: email },
-        { Name: 'email_verified', Value: 'true' },
-        { Name: 'name', Value: fullName },
-        { Name: 'custom:organizationId', Value: targetOrgId },
-        { Name: 'custom:role', Value: role },
-        { Name: 'custom:department', Value: department || '' },
-        { Name: 'custom:approvalStatus', Value: 'approved' },
-      ],
-      MessageAction: 'SUPPRESS',
-    }));
-
-    // Set permanent password
-    await cognitoClient.send(new AdminSetUserPasswordCommand({
-      UserPoolId: process.env.USER_POOL_ID,
-      Username: email,
-      Password: password,
-      Permanent: true,
-    }));
-
-    // Add to group
+    // Add user to Cognito group
     await cognitoClient.send(new AdminAddUserToGroupCommand({
       UserPoolId: process.env.USER_POOL_ID,
-      Username: email,
-      GroupName: userGroup,
+      Username: userToApprove.email,
+      GroupName: userToApprove.role, // Employees, Supervisors, or HRManagers
     }));
 
-    // Create in DynamoDB
-    const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const timestamp = new Date().toISOString();
+    console.log('User added to Cognito group');
 
-    const userRecord = {
-      organizationId: targetOrgId,
-      userId,
-      email,
-      fullName,
-      role,
-      department: department || '',
-      approvalStatus: 'approved',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-
+    // Update user in DynamoDB
     await docClient.send(new PutCommand({
       TableName: process.env.USERS_TABLE,
-      Item: userRecord,
+      Item: {
+        ...userToApprove,
+        approvalStatus: 'approved',
+        approvedBy: currentUserEmail,
+        approvedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
     }));
 
-    return {
-      statusCode: 201,
-      headers,
-      body: JSON.stringify({
-        message: 'User created successfully',
-        user: userRecord,
-      }),
-    };
-  } catch (error) {
-    console.error('Create user error:', error);
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: 'Failed to create user: ' + error.message }),
-    };
-  }
-}
+    console.log('User approval status updated in DynamoDB');
 
-async function handleGetUser(event, userGroups, userOrgId) {
-  try {
-    const userId = event.pathParameters.userId;
-    const organizationId = event.queryStringParameters?.organizationId || userOrgId;
-
-    const result = await docClient.send(new GetCommand({
-      TableName: process.env.USERS_TABLE,
-      Key: { organizationId, userId },
-    }));
-
-    if (!result.Item) {
-      return {
-        statusCode: 404,
-        headers,
-        body: JSON.stringify({ error: 'User not found' }),
-      };
-    }
-
-    // Check permissions
-    if (!userGroups.includes('SuperAdmins') && organizationId !== userOrgId) {
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({ error: 'Insufficient permissions' }),
-      };
-    }
+    // TODO: Send approval email to user
+    // This would use SES to notify the user they've been approved
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ user: result.Item }),
+      body: JSON.stringify({
+        success: true,
+        message: 'User approved successfully',
+      }),
     };
   } catch (error) {
-    console.error('Get user error:', error);
+    console.error('Error approving user:', error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Failed to get user' }),
+      body: JSON.stringify({ error: 'Failed to approve user' }),
     };
   }
 }
 
-async function handleUpdateUser(event, userGroups, userOrgId) {
+/**
+ * Delete/Reject a user
+ */
+async function handleDeleteUser(userId, currentUserEmail, currentUserGroups) {
   try {
-    const userId = event.pathParameters.userId;
-    const body = JSON.parse(event.body);
-    const organizationId = body.organizationId || userOrgId;
+    const isSuperAdmin = currentUserGroups.includes('SuperAdmins');
+    const isOrgAdmin = currentUserGroups.includes('OrgAdmins');
 
-    // Check permissions
-    if (!userGroups.includes('SuperAdmins') && 
-        !userGroups.includes('OrgAdmins') && 
-        organizationId !== userOrgId) {
+    if (!isOrgAdmin && !isSuperAdmin) {
       return {
         statusCode: 403,
         headers,
-        body: JSON.stringify({ error: 'Insufficient permissions' }),
+        body: JSON.stringify({ error: 'Access denied' }),
       };
     }
 
-    // Get current user
-    const currentUser = await docClient.send(new GetCommand({
+    // Get the user
+    const userResult = await docClient.send(new GetCommand({
       TableName: process.env.USERS_TABLE,
-      Key: { organizationId, userId },
+      Key: { userId },
     }));
 
-    if (!currentUser.Item) {
+    if (!userResult.Item) {
       return {
         statusCode: 404,
         headers,
@@ -303,135 +300,71 @@ async function handleUpdateUser(event, userGroups, userOrgId) {
       };
     }
 
-    // Update Cognito attributes if provided
-    const cognitoUpdates = [];
-    if (body.fullName) cognitoUpdates.push({ Name: 'name', Value: body.fullName });
-    if (body.role) cognitoUpdates.push({ Name: 'custom:role', Value: body.role });
-    if (body.department !== undefined) cognitoUpdates.push({ Name: 'custom:department', Value: body.department });
+    const userToDelete = userResult.Item;
 
-    if (cognitoUpdates.length > 0) {
-      await cognitoClient.send(new AdminUpdateUserAttributesCommand({
-        UserPoolId: process.env.USER_POOL_ID,
-        Username: currentUser.Item.email,
-        UserAttributes: cognitoUpdates,
+    // If OrgAdmin, check they're in the same organization
+    if (isOrgAdmin && !isSuperAdmin) {
+      const currentUserResult = await docClient.send(new QueryCommand({
+        TableName: process.env.USERS_TABLE,
+        IndexName: 'EmailIndex',
+        KeyConditionExpression: 'email = :email',
+        ExpressionAttributeValues: {
+          ':email': currentUserEmail,
+        },
       }));
-    }
 
-    // Update group if role changed
-    if (body.role && body.role !== currentUser.Item.role) {
-      const oldGroup = ROLE_GROUP_MAP[currentUser.Item.role];
-      const newGroup = ROLE_GROUP_MAP[body.role];
-
-      if (oldGroup) {
-        await cognitoClient.send(new AdminRemoveUserFromGroupCommand({
-          UserPoolId: process.env.USER_POOL_ID,
-          Username: currentUser.Item.email,
-          GroupName: oldGroup,
-        }));
+      if (!currentUserResult.Items || currentUserResult.Items.length === 0) {
+        return {
+          statusCode: 404,
+          headers,
+          body: JSON.stringify({ error: 'Current user not found' }),
+        };
       }
 
-      if (newGroup) {
-        await cognitoClient.send(new AdminAddUserToGroupCommand({
-          UserPoolId: process.env.USER_POOL_ID,
-          Username: currentUser.Item.email,
-          GroupName: newGroup,
-        }));
+      const currentUser = currentUserResult.Items[0];
+      
+      if (currentUser.organizationId !== userToDelete.organizationId) {
+        return {
+          statusCode: 403,
+          headers,
+          body: JSON.stringify({ error: 'You can only delete users in your organization' }),
+        };
       }
-    }
-
-    // Update DynamoDB
-    const updateExpressions = [];
-    const expressionAttributeNames = {};
-    const expressionAttributeValues = {};
-
-    const allowedFields = ['fullName', 'role', 'department'];
-    
-    allowedFields.forEach(field => {
-      if (body[field] !== undefined) {
-        updateExpressions.push(`#${field} = :${field}`);
-        expressionAttributeNames[`#${field}`] = field;
-        expressionAttributeValues[`:${field}`] = body[field];
-      }
-    });
-
-    updateExpressions.push('#updatedAt = :updatedAt');
-    expressionAttributeNames['#updatedAt'] = 'updatedAt';
-    expressionAttributeValues[':updatedAt'] = new Date().toISOString();
-
-    const result = await docClient.send(new UpdateCommand({
-      TableName: process.env.USERS_TABLE,
-      Key: { organizationId, userId },
-      UpdateExpression: `SET ${updateExpressions.join(', ')}`,
-      ExpressionAttributeNames: expressionAttributeNames,
-      ExpressionAttributeValues: expressionAttributeValues,
-      ReturnValues: 'ALL_NEW',
-    }));
-
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        message: 'User updated successfully',
-        user: result.Attributes,
-      }),
-    };
-  } catch (error) {
-    console.error('Update user error:', error);
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: 'Failed to update user' }),
-    };
-  }
-}
-
-async function handleDeleteUser(event, userGroups, userOrgId) {
-  try {
-    // Check permissions: OrgAdmins can delete users
-    if (!userGroups.includes('SuperAdmins') && !userGroups.includes('OrgAdmins')) {
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({ error: 'Insufficient permissions' }),
-      };
-    }
-
-    const userId = event.pathParameters.userId;
-    const organizationId = event.queryStringParameters?.organizationId || userOrgId;
-
-    // Get user
-    const user = await docClient.send(new GetCommand({
-      TableName: process.env.USERS_TABLE,
-      Key: { organizationId, userId },
-    }));
-
-    if (!user.Item) {
-      return {
-        statusCode: 404,
-        headers,
-        body: JSON.stringify({ error: 'User not found' }),
-      };
     }
 
     // Delete from Cognito
-    await cognitoClient.send(new AdminDeleteUserCommand({
-      UserPoolId: process.env.USER_POOL_ID,
-      Username: user.Item.email,
-    }));
+    try {
+      await cognitoClient.send(new AdminDeleteUserCommand({
+        UserPoolId: process.env.USER_POOL_ID,
+        Username: userToDelete.email,
+      }));
+      console.log('User deleted from Cognito');
+    } catch (cognitoError) {
+      console.log('Cognito delete error (may not exist):', cognitoError.message);
+      // Continue even if Cognito delete fails - user may not exist yet
+    }
 
     // Delete from DynamoDB
     await docClient.send(new DeleteCommand({
       TableName: process.env.USERS_TABLE,
-      Key: { organizationId, userId },
+      Key: { userId },
     }));
+
+    console.log('User deleted from DynamoDB');
+
+    // TODO: Send rejection email to user if they were pending
+    // This would use SES to notify the user
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ message: 'User deleted successfully' }),
+      body: JSON.stringify({
+        success: true,
+        message: 'User deleted successfully',
+      }),
     };
   } catch (error) {
-    console.error('Delete user error:', error);
+    console.error('Error deleting user:', error);
     return {
       statusCode: 500,
       headers,
@@ -440,74 +373,20 @@ async function handleDeleteUser(event, userGroups, userOrgId) {
   }
 }
 
-async function handleApproveUser(event, userGroups, userOrgId, approverEmail) {
+/**
+ * Decode JWT token
+ */
+function decodeJWT(token) {
   try {
-    // Check permissions: OrgAdmins can approve users
-    if (!userGroups.includes('SuperAdmins') && !userGroups.includes('OrgAdmins')) {
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({ error: 'Insufficient permissions' }),
-      };
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      throw new Error('Invalid JWT token');
     }
-
-    const userId = event.pathParameters.userId;
-    const organizationId = event.queryStringParameters?.organizationId || userOrgId;
-
-    // Get user
-    const user = await docClient.send(new GetCommand({
-      TableName: process.env.USERS_TABLE,
-      Key: { organizationId, userId },
-    }));
-
-    if (!user.Item) {
-      return {
-        statusCode: 404,
-        headers,
-        body: JSON.stringify({ error: 'User not found' }),
-      };
-    }
-
-    // Update Cognito
-    await cognitoClient.send(new AdminUpdateUserAttributesCommand({
-      UserPoolId: process.env.USER_POOL_ID,
-      Username: user.Item.email,
-      UserAttributes: [
-        { Name: 'custom:approvalStatus', Value: 'approved' },
-      ],
-    }));
-
-    // Update DynamoDB
-    await docClient.send(new UpdateCommand({
-      TableName: process.env.USERS_TABLE,
-      Key: { organizationId, userId },
-      UpdateExpression: 'SET #approvalStatus = :approved, #approvedBy = :approver, #updatedAt = :updatedAt',
-      ExpressionAttributeNames: {
-        '#approvalStatus': 'approvalStatus',
-        '#approvedBy': 'approvedBy',
-        '#updatedAt': 'updatedAt',
-      },
-      ExpressionAttributeValues: {
-        ':approved': 'approved',
-        ':approver': approverEmail,
-        ':updatedAt': new Date().toISOString(),
-      },
-    }));
-
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        message: 'User approved successfully',
-        userId,
-      }),
-    };
+    
+    const payload = parts[1];
+    const decoded = Buffer.from(payload, 'base64').toString('utf8');
+    return JSON.parse(decoded);
   } catch (error) {
-    console.error('Approve user error:', error);
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: 'Failed to approve user' }),
-    };
+    throw new Error('Failed to decode JWT token');
   }
 }

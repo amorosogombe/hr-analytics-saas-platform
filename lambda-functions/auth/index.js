@@ -1,6 +1,15 @@
-const { CognitoIdentityProviderClient, AdminGetUserCommand, AdminCreateUserCommand, AdminSetUserPasswordCommand, AdminAddUserToGroupCommand, AdminUpdateUserAttributesCommand } = require('@aws-sdk/client-cognito-identity-provider');
+const { 
+  CognitoIdentityProviderClient,
+  AdminCreateUserCommand,
+  AdminDeleteUserCommand,
+  AdminGetUserCommand,
+  AdminAddUserToGroupCommand,
+  AdminSetUserPasswordCommand,
+  SignUpCommand,
+  ConfirmSignUpCommand,
+} = require('@aws-sdk/client-cognito-identity-provider');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand, GetCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.REGION });
 const dynamoClient = new DynamoDBClient({ region: process.env.REGION });
@@ -9,7 +18,7 @@ const docClient = DynamoDBDocumentClient.from(dynamoClient);
 const headers = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-  'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
   'Content-Type': 'application/json',
 };
 
@@ -25,17 +34,24 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: '' };
     }
 
-    // Route handlers
-    if (path === '/auth/signup' && method === 'POST') {
-      return await handleSignup(event);
+    // Route: GET /auth/lookup-organization
+    if (path === '/auth/lookup-organization' && method === 'GET') {
+      return await handleLookupOrganization(event);
     }
 
-    if (path === '/auth/login' && method === 'POST') {
-      return await handleLogin(event);
+    // Route: POST /auth/register-user
+    if (path === '/auth/register-user' && method === 'POST') {
+      return await handleRegisterUser(event);
     }
 
+    // Route: POST /auth/verify-email
+    if (path === '/auth/verify-email' && method === 'POST') {
+      return await handleVerifyEmail(event);
+    }
+
+    // Route: GET /auth/me
     if (path === '/auth/me' && method === 'GET') {
-      return await handleGetCurrentUser(event);
+      return await handleGetMe(event);
     }
 
     return {
@@ -53,265 +69,364 @@ exports.handler = async (event) => {
   }
 };
 
-async function handleSignup(event) {
-  const body = JSON.parse(event.body);
-  const { email, password, fullName, organizationId, role, department, isOrgAdmin } = body;
-
-  // Validate required fields
-  if (!email || !password || !fullName) {
-    return {
-      statusCode: 400,
-      headers,
-      body: JSON.stringify({ error: 'Email, password, and full name are required' }),
-    };
-  }
-
+/**
+ * Lookup organization by email domain
+ */
+async function handleLookupOrganization(event) {
   try {
-    // Determine user group based on role or isOrgAdmin flag
-    let userGroup = 'Employees';
-    if (isOrgAdmin) {
-      // This is an organization admin signup (new organization request)
-      userGroup = 'OrgAdmins';
-    } else if (role) {
-      // Map role to Cognito group
-      const roleGroupMap = {
-        'hr_manager': 'HRManagers',
-        'supervisor': 'Supervisors',
-        'employee': 'Employees',
+    const domain = event.queryStringParameters?.domain;
+    
+    if (!domain) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Domain parameter required' }),
       };
-      userGroup = roleGroupMap[role] || 'Employees';
     }
 
-    // Create user in Cognito
-    const createUserCommand = new AdminCreateUserCommand({
-      UserPoolId: process.env.USER_POOL_ID,
-      Username: email,
-      UserAttributes: [
-        { Name: 'email', Value: email },
-        { Name: 'email_verified', Value: 'true' },
-        { Name: 'name', Value: fullName },
-        { Name: 'custom:organizationId', Value: organizationId || 'pending' },
-        { Name: 'custom:role', Value: role || userGroup.toLowerCase() },
-        { Name: 'custom:department', Value: department || '' },
-        { Name: 'custom:approvalStatus', Value: isOrgAdmin ? 'pending_org_approval' : 'pending_approval' },
-      ],
-      MessageAction: 'SUPPRESS', // We'll set password directly
-    });
+    console.log('Looking up organization for domain:', domain);
 
-    await cognitoClient.send(createUserCommand);
-
-    // Set permanent password
-    const setPasswordCommand = new AdminSetUserPasswordCommand({
-      UserPoolId: process.env.USER_POOL_ID,
-      Username: email,
-      Password: password,
-      Permanent: true,
-    });
-
-    await cognitoClient.send(setPasswordCommand);
-
-    // Add user to appropriate group
-    const addToGroupCommand = new AdminAddUserToGroupCommand({
-      UserPoolId: process.env.USER_POOL_ID,
-      Username: email,
-      GroupName: userGroup,
-    });
-
-    await cognitoClient.send(addToGroupCommand);
-
-    // Create user record in DynamoDB
-    const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const timestamp = new Date().toISOString();
-
-    const userRecord = {
-      organizationId: organizationId || 'pending',
-      userId,
-      email,
-      fullName,
-      role: role || userGroup.toLowerCase(),
-      department: department || '',
-      approvalStatus: isOrgAdmin ? 'pending_org_approval' : 'pending_approval',
-      isOrgAdmin: isOrgAdmin || false,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-
-    await docClient.send(new PutCommand({
-      TableName: process.env.USERS_TABLE,
-      Item: userRecord,
+    // Query organizations table for matching domain
+    const result = await docClient.send(new QueryCommand({
+      TableName: process.env.ORGANIZATIONS_TABLE,
+      IndexName: 'DomainIndex', // We'll need to create this GSI
+      KeyConditionExpression: '#domain = :domain',
+      ExpressionAttributeNames: {
+        '#domain': 'domain',
+      },
+      ExpressionAttributeValues: {
+        ':domain': domain,
+      },
     }));
 
-    // If this is an org admin signup, create organization request
-    if (isOrgAdmin && body.organizationName) {
-      const orgId = `org_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const orgRecord = {
-        organizationId: orgId,
-        name: body.organizationName,
-        subdomain: body.subdomain || body.organizationName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-        adminEmail: email,
-        adminUserId: userId,
-        status: 'pending_approval',
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-
-      await docClient.send(new PutCommand({
-        TableName: process.env.ORGANIZATIONS_TABLE,
-        Item: orgRecord,
-      }));
-
-      // Update user record with organization ID
-      userRecord.organizationId = orgId;
-      await docClient.send(new PutCommand({
-        TableName: process.env.USERS_TABLE,
-        Item: userRecord,
-      }));
+    if (result.Items && result.Items.length > 0) {
+      const org = result.Items[0];
+      
+      // Only return active organizations
+      if (org.status === 'active') {
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({
+            organization: {
+              organizationId: org.organizationId,
+              name: org.name,
+              subdomain: org.subdomain,
+            },
+          }),
+        };
+      }
     }
 
     return {
-      statusCode: 201,
+      statusCode: 200,
       headers,
-      body: JSON.stringify({
-        message: 'User created successfully. Awaiting approval.',
+      body: JSON.stringify({ organization: null }),
+    };
+  } catch (error) {
+    console.error('Error looking up organization:', error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'Failed to lookup organization' }),
+    };
+  }
+}
+
+/**
+ * Register a new user (Employee/Supervisor/HR Manager)
+ */
+async function handleRegisterUser(event) {
+  try {
+    const body = JSON.parse(event.body);
+    const { email, password, fullName, role, organizationId } = body;
+
+    // Validation
+    if (!email || !password || !fullName || !role || !organizationId) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'All fields are required' }),
+      };
+    }
+
+    // Validate role (only these 3 roles can register)
+    const allowedRoles = ['Employees', 'Supervisors', 'HRManagers'];
+    if (!allowedRoles.includes(role)) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Invalid role. Only Employee, Supervisor, or HR Manager can register.' }),
+      };
+    }
+
+    // Check if organization exists and is active
+    const orgResult = await docClient.send(new GetCommand({
+      TableName: process.env.ORGANIZATIONS_TABLE,
+      Key: { organizationId },
+    }));
+
+    if (!orgResult.Item) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ error: 'Organization not found' }),
+      };
+    }
+
+    if (orgResult.Item.status !== 'active') {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Organization is not active' }),
+      };
+    }
+
+    console.log('Registering user:', email, 'for org:', organizationId);
+
+    // Create user in Cognito (with email verification required)
+    const signUpCommand = new SignUpCommand({
+      ClientId: process.env.USER_POOL_CLIENT_ID,
+      Username: email,
+      Password: password,
+      UserAttributes: [
+        { Name: 'email', Value: email },
+        { Name: 'name', Value: fullName },
+      ],
+    });
+
+    const signUpResult = await cognitoClient.send(signUpCommand);
+    console.log('Cognito signup result:', signUpResult);
+
+    const userId = signUpResult.UserSub;
+
+    // Create user record in DynamoDB (status: pending_approval)
+    await docClient.send(new PutCommand({
+      TableName: process.env.USERS_TABLE,
+      Item: {
         userId,
         email,
-        approvalStatus: userRecord.approvalStatus,
+        fullName,
+        organizationId,
+        role,
+        approvalStatus: 'pending_approval', // Awaiting OrgAdmin approval
+        emailVerified: false, // Will be true after verification
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    }));
+
+    console.log('User record created in DynamoDB');
+
+    // TODO: Send email notification to OrgAdmin
+    // This would use SES to notify org admins of pending approval
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        success: true,
+        message: 'Registration successful. Please check your email for verification code.',
+        needsVerification: true,
+        userId,
       }),
     };
   } catch (error) {
-    console.error('Signup error:', error);
+    console.error('Error registering user:', error);
     
+    // Handle specific Cognito errors
     if (error.name === 'UsernameExistsException') {
       return {
-        statusCode: 409,
+        statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'User with this email already exists' }),
+        body: JSON.stringify({ error: 'An account with this email already exists' }),
       };
     }
-
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: 'Failed to create user: ' + error.message }),
-    };
-  }
-}
-
-async function handleLogin(event) {
-  // Note: Actual login is handled by Cognito directly via AWS Amplify on frontend
-  // This endpoint is for validation and fetching user details after Cognito auth
-  const body = JSON.parse(event.body);
-  const { email } = body;
-
-  try {
-    // Get user from Cognito
-    const getUserCommand = new AdminGetUserCommand({
-      UserPoolId: process.env.USER_POOL_ID,
-      Username: email,
-    });
-
-    const cognitoUser = await cognitoClient.send(getUserCommand);
-
-    // Get approval status
-    const approvalStatusAttr = cognitoUser.UserAttributes.find(
-      attr => attr.Name === 'custom:approvalStatus'
-    );
-    const approvalStatus = approvalStatusAttr?.Value || 'pending_approval';
-
-    if (approvalStatus !== 'approved') {
+    
+    if (error.name === 'InvalidPasswordException') {
       return {
-        statusCode: 403,
+        statusCode: 400,
         headers,
-        body: JSON.stringify({ 
-          error: 'Account not yet approved',
-          approvalStatus,
-        }),
+        body: JSON.stringify({ error: 'Password does not meet requirements (minimum 8 characters)' }),
       };
     }
 
-    // Get user details from DynamoDB
-    const orgIdAttr = cognitoUser.UserAttributes.find(
-      attr => attr.Name === 'custom:organizationId'
-    );
-    const organizationId = orgIdAttr?.Value;
-
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        message: 'Login validation successful',
-        email,
-        organizationId,
-        approvalStatus,
-      }),
-    };
-  } catch (error) {
-    console.error('Login validation error:', error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Login validation failed: ' + error.message }),
+      body: JSON.stringify({ error: 'Registration failed. Please try again.' }),
     };
   }
 }
 
-async function handleGetCurrentUser(event) {
+/**
+ * Verify user email with confirmation code
+ */
+async function handleVerifyEmail(event) {
   try {
-    // Get user from JWT token claims
-    const claims = event.requestContext.authorizer.claims;
-    const email = claims.email;
-    const sub = claims.sub;
+    const body = JSON.parse(event.body);
+    const { email, code } = body;
 
-    // Get user from Cognito
-    const getUserCommand = new AdminGetUserCommand({
-      UserPoolId: process.env.USER_POOL_ID,
+    if (!email || !code) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Email and code are required' }),
+      };
+    }
+
+    console.log('Verifying email for:', email);
+
+    // Confirm signup in Cognito
+    const confirmCommand = new ConfirmSignUpCommand({
+      ClientId: process.env.USER_POOL_CLIENT_ID,
       Username: email,
+      ConfirmationCode: code,
     });
 
-    const cognitoUser = await cognitoClient.send(getUserCommand);
+    await cognitoClient.send(confirmCommand);
+    console.log('Email verified in Cognito');
 
-    // Extract user attributes
-    const attributes = {};
-    cognitoUser.UserAttributes.forEach(attr => {
-      attributes[attr.Name] = attr.Value;
-    });
+    // Update user record in DynamoDB
+    // First, find the user by email
+    const queryResult = await docClient.send(new QueryCommand({
+      TableName: process.env.USERS_TABLE,
+      IndexName: 'EmailIndex', // Need to create this GSI
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: {
+        ':email': email,
+      },
+    }));
 
-    // Get user from DynamoDB for additional details
-    const orgId = attributes['custom:organizationId'];
-    const userId = sub;
-
-    let userDetails = null;
-    try {
-      const result = await docClient.send(new GetCommand({
+    if (queryResult.Items && queryResult.Items.length > 0) {
+      const user = queryResult.Items[0];
+      
+      // Update emailVerified flag
+      await docClient.send(new PutCommand({
         TableName: process.env.USERS_TABLE,
-        Key: { organizationId: orgId, userId },
+        Item: {
+          ...user,
+          emailVerified: true,
+          updatedAt: new Date().toISOString(),
+        },
       }));
-      userDetails = result.Item;
-    } catch (err) {
-      console.warn('Could not fetch user details from DynamoDB:', err);
+
+      console.log('User emailVerified flag updated');
     }
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        userId: sub,
-        email: attributes.email,
-        fullName: attributes.name,
-        organizationId: attributes['custom:organizationId'],
-        role: attributes['custom:role'],
-        department: attributes['custom:department'],
-        approvalStatus: attributes['custom:approvalStatus'],
-        groups: claims['cognito:groups'] || [],
-        ...userDetails,
+        success: true,
+        message: 'Email verified successfully. Awaiting administrator approval.',
       }),
     };
   } catch (error) {
-    console.error('Get current user error:', error);
+    console.error('Error verifying email:', error);
+    
+    if (error.name === 'CodeMismatchException') {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Invalid verification code' }),
+      };
+    }
+    
+    if (error.name === 'ExpiredCodeException') {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Verification code has expired' }),
+      };
+    }
+
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Failed to get user details: ' + error.message }),
+      body: JSON.stringify({ error: 'Email verification failed' }),
     };
+  }
+}
+
+/**
+ * Get current user info
+ */
+async function handleGetMe(event) {
+  try {
+    // Extract token from Authorization header
+    const authHeader = event.headers.Authorization || event.headers.authorization;
+    if (!authHeader) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({ error: 'No authorization token' }),
+      };
+    }
+
+    // Decode JWT to get user email
+    const token = authHeader.replace('Bearer ', '');
+    const payload = decodeJWT(token);
+    const email = payload.email;
+    const groups = payload['cognito:groups'] || [];
+
+    // Get user from DynamoDB
+    const queryResult = await docClient.send(new QueryCommand({
+      TableName: process.env.USERS_TABLE,
+      IndexName: 'EmailIndex',
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: {
+        ':email': email,
+      },
+    }));
+
+    if (!queryResult.Items || queryResult.Items.length === 0) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ error: 'User not found' }),
+      };
+    }
+
+    const user = queryResult.Items[0];
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        userId: user.userId,
+        email: user.email,
+        fullName: user.fullName,
+        organizationId: user.organizationId,
+        role: user.role,
+        approvalStatus: user.approvalStatus,
+        groups,
+      }),
+    };
+  } catch (error) {
+    console.error('Error getting user:', error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'Failed to get user info' }),
+    };
+  }
+}
+
+/**
+ * Decode JWT token (basic decoding, not verification)
+ */
+function decodeJWT(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      throw new Error('Invalid JWT token');
+    }
+    
+    const payload = parts[1];
+    const decoded = Buffer.from(payload, 'base64').toString('utf8');
+    return JSON.parse(decoded);
+  } catch (error) {
+    throw new Error('Failed to decode JWT token');
   }
 }

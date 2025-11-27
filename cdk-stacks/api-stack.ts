@@ -50,11 +50,13 @@ export class ApiStack extends cdk.Stack {
         'cognito-idp:AdminRemoveUserFromGroup',
         'cognito-idp:ListUsers',
         'cognito-idp:AdminSetUserPassword',
+        'cognito-idp:SignUp',                    // NEW: For user registration
+        'cognito-idp:ConfirmSignUp',            // NEW: For email verification
       ],
       resources: [props.userPool.userPoolArn],
     }));
 
-    // Grant QuickSight permissions - UPDATED with more permissions
+    // Grant QuickSight permissions
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       actions: [
         'quicksight:GenerateEmbedUrlForRegisteredUser',
@@ -65,6 +67,8 @@ export class ApiStack extends cdk.Stack {
         'quicksight:DescribeUser',
         'quicksight:RegisterUser',
         'quicksight:GetAuthCode',
+        'quicksight:UpdateDashboardPermissions',
+        'quicksight:DescribeDashboardPermissions',
       ],
       resources: ['*'],
     }));
@@ -72,6 +76,7 @@ export class ApiStack extends cdk.Stack {
     // Environment variables for Lambda functions
     const lambdaEnvironment = {
       USER_POOL_ID: props.userPool.userPoolId,
+      USER_POOL_CLIENT_ID: '1ranm65v7jnt1f3s9i7m6rug00',
       ORGANIZATIONS_TABLE: props.tables.organizations.tableName,
       USERS_TABLE: props.tables.users.tableName,
       COMMENTS_TABLE: props.tables.comments.tableName,
@@ -110,7 +115,6 @@ export class ApiStack extends cdk.Stack {
       memorySize: 512,
     });
 
-    // UPDATED: QuickSight Dashboard Function - now points to quicksight directory
     const dashboardFunction = new lambda.Function(this, 'DashboardFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
@@ -181,6 +185,16 @@ export class ApiStack extends cdk.Stack {
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
+    // NEW ROUTES for user registration
+    const authLookupOrg = auth.addResource('lookup-organization');
+    authLookupOrg.addMethod('GET', new apigateway.LambdaIntegration(authFunction));
+
+    const authRegisterUser = auth.addResource('register-user');
+    authRegisterUser.addMethod('POST', new apigateway.LambdaIntegration(authFunction));
+
+    const authVerifyEmail = auth.addResource('verify-email');
+    authVerifyEmail.addMethod('POST', new apigateway.LambdaIntegration(authFunction));
+
     // Organization endpoints
     const organizations = this.api.root.addResource('organizations');
     organizations.addMethod('GET', new apigateway.LambdaIntegration(organizationFunction), {
@@ -243,8 +257,7 @@ export class ApiStack extends cdk.Stack {
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
-    // UPDATED: Dashboard endpoints - now using QuickSight Lambda
-    // Changed from POST /dashboards/embed to GET /dashboards/embed-url (with query param)
+    // Dashboard endpoints
     const dashboards = this.api.root.addResource('dashboards');
     
     const dashboardEmbedUrl = dashboards.addResource('embed-url');
@@ -262,7 +275,6 @@ export class ApiStack extends cdk.Stack {
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
-    // Keep the old /dashboards/embed endpoint for backward compatibility (optional)
     const dashboardEmbed = dashboards.addResource('embed');
     dashboardEmbed.addMethod('POST', new apigateway.LambdaIntegration(dashboardFunction), {
       authorizer: this.authorizer,
