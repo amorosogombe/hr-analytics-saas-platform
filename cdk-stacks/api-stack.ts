@@ -50,6 +50,8 @@ export class ApiStack extends cdk.Stack {
         'cognito-idp:AdminRemoveUserFromGroup',
         'cognito-idp:ListUsers',
         'cognito-idp:AdminSetUserPassword',
+        'cognito-idp:SignUp',                    // NEW: For user registration
+        'cognito-idp:ConfirmSignUp',            // NEW: For email verification
       ],
       resources: [props.userPool.userPoolArn],
     }));
@@ -62,6 +64,11 @@ export class ApiStack extends cdk.Stack {
         'quicksight:GetDashboardEmbedUrl',
         'quicksight:DescribeDashboard',
         'quicksight:ListDashboards',
+        'quicksight:DescribeUser',
+        'quicksight:RegisterUser',
+        'quicksight:GetAuthCode',
+        'quicksight:UpdateDashboardPermissions',
+        'quicksight:DescribeDashboardPermissions',
       ],
       resources: ['*'],
     }));
@@ -69,6 +76,7 @@ export class ApiStack extends cdk.Stack {
     // Environment variables for Lambda functions
     const lambdaEnvironment = {
       USER_POOL_ID: props.userPool.userPoolId,
+      USER_POOL_CLIENT_ID: '1ranm65v7jnt1f3s9i7m6rug00',
       ORGANIZATIONS_TABLE: props.tables.organizations.tableName,
       USERS_TABLE: props.tables.users.tableName,
       COMMENTS_TABLE: props.tables.comments.tableName,
@@ -110,8 +118,11 @@ export class ApiStack extends cdk.Stack {
     const dashboardFunction = new lambda.Function(this, 'DashboardFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda-functions/dashboard')),
-      environment: lambdaEnvironment,
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda-functions/quicksight')),
+      environment: {
+        ...lambdaEnvironment,
+        AWS_ACCOUNT_ID: this.account,
+      },
       role: lambdaRole,
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
@@ -173,6 +184,16 @@ export class ApiStack extends cdk.Stack {
       authorizer: this.authorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
+
+    // NEW ROUTES for user registration
+    const authLookupOrg = auth.addResource('lookup-organization');
+    authLookupOrg.addMethod('GET', new apigateway.LambdaIntegration(authFunction));
+
+    const authRegisterUser = auth.addResource('register-user');
+    authRegisterUser.addMethod('POST', new apigateway.LambdaIntegration(authFunction));
+
+    const authVerifyEmail = auth.addResource('verify-email');
+    authVerifyEmail.addMethod('POST', new apigateway.LambdaIntegration(authFunction));
 
     // Organization endpoints
     const organizations = this.api.root.addResource('organizations');
@@ -238,14 +259,24 @@ export class ApiStack extends cdk.Stack {
 
     // Dashboard endpoints
     const dashboards = this.api.root.addResource('dashboards');
-    const dashboardEmbed = dashboards.addResource('embed');
-    dashboardEmbed.addMethod('POST', new apigateway.LambdaIntegration(dashboardFunction), {
+    
+    const dashboardEmbedUrl = dashboards.addResource('embed-url');
+    dashboardEmbedUrl.addMethod('GET', new apigateway.LambdaIntegration(dashboardFunction), {
       authorizer: this.authorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
+      requestParameters: {
+        'method.request.querystring.dashboard': false,
+      },
     });
 
     const dashboardList = dashboards.addResource('list');
     dashboardList.addMethod('GET', new apigateway.LambdaIntegration(dashboardFunction), {
+      authorizer: this.authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+    });
+
+    const dashboardEmbed = dashboards.addResource('embed');
+    dashboardEmbed.addMethod('POST', new apigateway.LambdaIntegration(dashboardFunction), {
       authorizer: this.authorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
@@ -292,6 +323,11 @@ export class ApiStack extends cdk.Stack {
       value: this.api.url,
       description: 'API Gateway URL',
       exportName: 'HRAnalytics-ApiUrl',
+    });
+
+    new cdk.CfnOutput(this, 'DashboardFunctionName', {
+      value: dashboardFunction.functionName,
+      description: 'QuickSight Dashboard Lambda Function Name',
     });
 
     console.log('✅ API Gateway and Lambda functions created successfully');

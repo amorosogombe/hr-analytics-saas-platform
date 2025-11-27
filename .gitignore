@@ -1,70 +1,63 @@
 # Dependencies
 node_modules/
-package-lock.json
-npm-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production
+build/
+dist/
 
 # CDK
-.cdk.staging/
 cdk.out/
-*.js
+*.js.map
 *.d.ts
 !jest.config.js
-*.js.map
+.cdk.staging/
 
 # Environment variables
 .env
 .env.local
-.env.production
-.env.*.local
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-*.egg-info/
-dist/
-build/
-
-# Lambda layers
-infrastructure/lambda-layers/dependencies/python/bin/
-infrastructure/lambda-layers/dependencies/python/lib/
-infrastructure/lambda-layers/dependencies/python/*.dist-info/
-
-# Testing
-coverage/
-.nyc_output/
-*.log
-
-# Build outputs
-frontend/build/
-frontend/dist/
-
-# Secrets
-*.pem
-*.key
-secrets.json
-credentials.json
+.env.development.local
+.env.test.local
+.env.production.local
 
 # AWS
 .aws-sam/
+.aws/
 
-# Temporary files
-*.tmp
-*.bak
-*.cache
-.terraform/
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+*.log
+
+# Misc
+.cache/
+.temp/
+.tmp/
+
+# CDK Context
+cdk.context.json
+
+# Lambda
+lambda-functions/*/node_modules/
+lambda-functions/*/package-lock.json
+
+# Frontend
+frontend-app/node_modules/
+frontend-app/build/
