@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { APP_CONFIG } from '../aws-config';
 import { 
   Building2, 
   Users, 
@@ -272,7 +273,7 @@ const OrganizationsPage = () => {
     setError(null);
     try {
       // Try to fetch from API
-      const apiUrl = import.meta.env.VITE_API_URL;
+      const apiUrl = APP_CONFIG.apiUrl;
       if (apiUrl) {
         const response = await fetch(`${apiUrl}/organizations`, {
           headers: {
