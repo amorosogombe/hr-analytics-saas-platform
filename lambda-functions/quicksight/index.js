@@ -1,57 +1,34 @@
-const { QuickSightClient, GenerateEmbedUrlForRegisteredUserCommand, RegisterUserCommand, DescribeUserCommand } = require('@aws-sdk/client-quicksight');
+const { 
+  QuickSightClient, 
+  GenerateEmbedUrlForRegisteredUserCommand,
+  DescribeUserCommand,
+  RegisterUserCommand,
+  UpdateDashboardPermissionsCommand,
+  DescribeDashboardPermissionsCommand
+} = require('@aws-sdk/client-quicksight');
 
-const quicksightClient = new QuickSightClient({ region: process.env.REGION || 'eu-west-1' });
-
-const ACCOUNT_ID = process.env.AWS_ACCOUNT_ID || '503561437485';
-const NAMESPACE = 'default';
-
-// Dashboard configuration with role-based access
-const DASHBOARDS = {
-  'hr-analytics': {
-    id: 'a19998bb-32f0-4738-9e60-3af804a36975',
-    name: 'HR Analytics Dashboard',
-    allowedRoles: ['SuperAdmin', 'OrgAdmin', 'HRManager'],
-  },
-  'controlio': {
-    id: '5faeaa7c-42ad-4c04-a270-7e9bd6934450',
-    name: 'Controlio Dashboard',
-    allowedRoles: ['SuperAdmin', 'OrgAdmin', 'HRManager', 'Supervisor'],
-  },
-};
+const quicksightClient = new QuickSightClient({ region: process.env.REGION });
 
 const headers = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
   'Content-Type': 'application/json',
 };
 
-// Helper function to extract role from Cognito groups or custom attribute
-function extractUserRole(claims) {
-  // First, check Cognito groups
-  const cognitoGroups = claims['cognito:groups'];
-  
-  if (cognitoGroups) {
-    // cognito:groups can be a string or array
-    const groups = Array.isArray(cognitoGroups) ? cognitoGroups : [cognitoGroups];
-    
-    // Map Cognito groups to roles
-    if (groups.includes('SuperAdmins')) return 'SuperAdmin';
-    if (groups.includes('OrgAdmins')) return 'OrgAdmin';
-    if (groups.includes('HRManagers')) return 'HRManager';
-    if (groups.includes('Supervisors')) return 'Supervisor';
-    if (groups.includes('Employees')) return 'Employee';
-  }
-  
-  // Fallback to custom:role attribute
-  const customRole = claims['custom:role'];
-  if (customRole) {
-    return customRole;
-  }
-  
-  // Default to Employee
-  return 'Employee';
-}
+// Dashboard configuration based on roles
+const DASHBOARD_CONFIG = {
+  'hr-analytics': {
+    dashboardId: 'a19998bb-32f0-4738-9e60-3af804a36975',
+    name: 'HR Analytics Dashboard',
+    allowedRoles: ['SuperAdmin', 'OrgAdmin', 'HRManager', 'Supervisor'],
+  },
+  'controlio': {
+    dashboardId: '5faeaa7c-42ad-4c04-a270-7e9bd6934450',
+    name: 'Controlio Dashboard',
+    allowedRoles: ['SuperAdmin', 'OrgAdmin', 'HRManager'],
+  },
+};
 
 exports.handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));
@@ -65,50 +42,14 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: '' };
     }
 
-    // Extract user info from Cognito authorizer
-    const claims = event.requestContext?.authorizer?.claims;
-    if (!claims) {
-      return {
-        statusCode: 401,
-        headers,
-        body: JSON.stringify({ error: 'Missing authorization' }),
-      };
-    }
-
-    const userEmail = claims.email;
-    const userId = claims.sub;
-    const userRole = extractUserRole(claims);
-
-    console.log('User Info:', { userEmail, userId, userRole, groups: claims['cognito:groups'] });
-
-    if (!userEmail || !userId) {
-      return {
-        statusCode: 401,
-        headers,
-        body: JSON.stringify({ error: 'Invalid token: missing user info' }),
-      };
-    }
-
-    // Route: GET /dashboards/embed-url?dashboard=hr-analytics
+    // Route: GET /dashboards/embed-url
     if (path === '/dashboards/embed-url' && method === 'GET') {
-      return await handleGetEmbedUrl(event, userEmail, userRole, userId);
+      return await handleGetEmbedUrl(event);
     }
 
-    // Route: GET /dashboards/list - List available dashboards for user
+    // Route: GET /dashboards/list
     if (path === '/dashboards/list' && method === 'GET') {
-      return await handleListDashboards(userRole);
-    }
-
-    // Route: POST /dashboards/embed - Legacy endpoint (backward compatibility)
-    if (path === '/dashboards/embed' && method === 'POST') {
-      const body = JSON.parse(event.body || '{}');
-      const dashboardKey = body.dashboard || 'hr-analytics';
-      // Create a modified event with query parameters
-      const modifiedEvent = {
-        ...event,
-        queryStringParameters: { dashboard: dashboardKey },
-      };
-      return await handleGetEmbedUrl(modifiedEvent, userEmail, userRole, userId);
+      return await handleListDashboards(event);
     }
 
     return {
@@ -123,54 +64,78 @@ exports.handler = async (event) => {
       headers,
       body: JSON.stringify({ 
         error: error.message,
-        details: error.stack 
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined 
       }),
     };
   }
 };
 
-async function handleGetEmbedUrl(event, userEmail, userRole, userId) {
-  const dashboardKey = event.queryStringParameters?.dashboard || 'hr-analytics';
-  
-  console.log('Generating embed URL for dashboard:', dashboardKey);
-  
-  // Validate dashboard exists
-  const dashboard = DASHBOARDS[dashboardKey];
-  if (!dashboard) {
-    return {
-      statusCode: 400,
-      headers,
-      body: JSON.stringify({ 
-        error: 'Invalid dashboard key',
-        availableDashboards: Object.keys(DASHBOARDS)
-      }),
-    };
-  }
-
-  // Check role-based access
-  if (!dashboard.allowedRoles.includes(userRole)) {
-    return {
-      statusCode: 403,
-      headers,
-      body: JSON.stringify({ 
-        error: 'Access denied: insufficient permissions for this dashboard',
-        requiredRoles: dashboard.allowedRoles,
-        userRole 
-      }),
-    };
-  }
-
+/**
+ * Generate embed URL for a specific dashboard
+ */
+async function handleGetEmbedUrl(event) {
   try {
-    // Ensure user exists in QuickSight (register if needed)
-    const quicksightUser = await ensureQuickSightUser(userEmail, userRole);
-    
-    console.log('QuickSight user:', quicksightUser);
-    
-    // Generate embed URL
+    // Extract and validate authorization token
+    const authHeader = event.headers.Authorization || event.headers.authorization;
+    if (!authHeader) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({ error: 'Authorization header required' }),
+      };
+    }
+
+    // Get dashboard ID from query parameters
+    const dashboardKey = event.queryStringParameters?.dashboard;
+    if (!dashboardKey) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Dashboard parameter required (hr-analytics or controlio)' }),
+      };
+    }
+
+    const dashboardConfig = DASHBOARD_CONFIG[dashboardKey];
+    if (!dashboardConfig) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ error: 'Dashboard not found' }),
+      };
+    }
+
+    // Decode JWT token to get user info
+    const token = authHeader.replace('Bearer ', '');
+    const payload = decodeJWT(token);
+    const userEmail = payload.email;
+    const userGroups = payload['cognito:groups'] || [];
+
+    console.log('User email:', userEmail);
+    console.log('User groups:', userGroups);
+
+    // Check if user has permission to view this dashboard
+    const hasPermission = dashboardConfig.allowedRoles.some(role => 
+      userGroups.includes(role) || userGroups.includes(`${role}s`)
+    );
+
+    if (!hasPermission) {
+      return {
+        statusCode: 403,
+        headers,
+        body: JSON.stringify({ 
+          error: 'You do not have permission to view this dashboard',
+          requiredRoles: dashboardConfig.allowedRoles 
+        }),
+      };
+    }
+
+    // Ensure user exists in QuickSight and has dashboard access
+    await ensureQuickSightUserAndAccess(userEmail, dashboardConfig.dashboardId, userGroups);
+
+    // Generate QuickSight embed URL
     const embedUrl = await generateEmbedUrl(
-      quicksightUser.Arn,
-      dashboard.id,
-      userEmail
+      userEmail,
+      dashboardConfig.dashboardId
     );
 
     return {
@@ -178,8 +143,8 @@ async function handleGetEmbedUrl(event, userEmail, userRole, userId) {
       headers,
       body: JSON.stringify({
         embedUrl,
-        dashboardId: dashboard.id,
-        dashboardName: dashboard.name,
+        dashboardId: dashboardConfig.dashboardId,
+        dashboardName: dashboardConfig.name,
         expiresIn: 600, // 10 minutes
       }),
     };
@@ -196,80 +161,211 @@ async function handleGetEmbedUrl(event, userEmail, userRole, userId) {
   }
 }
 
-async function handleListDashboards(userRole) {
-  // Filter dashboards based on user role
-  const availableDashboards = Object.entries(DASHBOARDS)
-    .filter(([key, dashboard]) => dashboard.allowedRoles.includes(userRole))
-    .map(([key, dashboard]) => ({
-      key,
-      id: dashboard.id,
-      name: dashboard.name,
-    }));
-
-  return {
-    statusCode: 200,
-    headers,
-    body: JSON.stringify({
-      dashboards: availableDashboards,
-      userRole,
-    }),
-  };
-}
-
-async function ensureQuickSightUser(email, role) {
-  const username = email.replace('@', '_at_').replace(/\./g, '_');
-  
+/**
+ * List available dashboards for the current user
+ */
+async function handleListDashboards(event) {
   try {
-    // Try to describe existing user
-    const describeCommand = new DescribeUserCommand({
-      AwsAccountId: ACCOUNT_ID,
-      Namespace: NAMESPACE,
-      UserName: username,
-    });
-    
-    const user = await quicksightClient.send(describeCommand);
-    console.log('Existing QuickSight user found:', username);
-    return user.User;
-  } catch (error) {
-    if (error.name === 'ResourceNotFoundException') {
-      // User doesn't exist, register them
-      console.log(`Registering new QuickSight user: ${username}`);
-      
-      const registerCommand = new RegisterUserCommand({
-        AwsAccountId: ACCOUNT_ID,
-        Namespace: NAMESPACE,
-        Email: email,
-        IdentityType: 'QUICKSIGHT',
-        UserRole: role === 'SuperAdmin' ? 'ADMIN' : 'READER',
-        UserName: username,
-      });
-      
-      const registeredUser = await quicksightClient.send(registerCommand);
-      console.log('New QuickSight user registered:', username);
-      return registeredUser.User;
+    const authHeader = event.headers.Authorization || event.headers.authorization;
+    if (!authHeader) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({ error: 'Authorization header required' }),
+      };
     }
-    console.error('Error checking/registering QuickSight user:', error);
-    throw error;
+
+    const token = authHeader.replace('Bearer ', '');
+    const payload = decodeJWT(token);
+    const userGroups = payload['cognito:groups'] || [];
+
+    // Determine user role for response
+    let userRole = 'Employee';
+    const roleMapping = {
+      'SuperAdmins': 'SuperAdmin',
+      'OrgAdmins': 'OrgAdmin',
+      'HRManagers': 'HRManager',
+      'Supervisors': 'Supervisor',
+      'Employees': 'Employee'
+    };
+    
+    for (const [group, role] of Object.entries(roleMapping)) {
+      if (userGroups.includes(group)) {
+        userRole = role;
+        break;
+      }
+    }
+
+    // Filter dashboards based on user roles
+    const availableDashboards = Object.entries(DASHBOARD_CONFIG)
+      .filter(([key, config]) => 
+        config.allowedRoles.some(role => 
+          userGroups.includes(role) || userGroups.includes(`${role}s`)
+        )
+      )
+      .map(([key, config]) => ({
+        key,
+        id: config.dashboardId,
+        name: config.name,
+        allowedRoles: config.allowedRoles,
+      }));
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        dashboards: availableDashboards,
+        userRole
+      }),
+    };
+  } catch (error) {
+    console.error('Error listing dashboards:', error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: error.message }),
+    };
   }
 }
 
-async function generateEmbedUrl(userArn, dashboardId, userEmail) {
+/**
+ * Ensure user exists in QuickSight and has access to the dashboard
+ */
+async function ensureQuickSightUserAndAccess(userEmail, dashboardId, userGroups) {
+  const namespace = 'default';
+  
+  try {
+    // Check if user exists
+    const describeCommand = new DescribeUserCommand({
+      AwsAccountId: process.env.AWS_ACCOUNT_ID,
+      Namespace: namespace,
+      UserName: userEmail,
+    });
+
+    await quicksightClient.send(describeCommand);
+    console.log('User exists in QuickSight:', userEmail);
+  } catch (error) {
+    if (error.name === 'ResourceNotFoundException') {
+      // User doesn't exist, register them
+      console.log('Registering new QuickSight user:', userEmail);
+      
+      const registerCommand = new RegisterUserCommand({
+        AwsAccountId: process.env.AWS_ACCOUNT_ID,
+        Namespace: namespace,
+        Email: userEmail,
+        IdentityType: 'QUICKSIGHT',
+        UserRole: 'READER', // Basic viewer role
+        UserName: userEmail,
+      });
+
+      await quicksightClient.send(registerCommand);
+      console.log('User registered successfully');
+    } else {
+      throw error;
+    }
+  }
+
+  // Grant dashboard access
+  await grantDashboardAccess(userEmail, dashboardId, namespace);
+}
+
+/**
+ * Grant user access to a specific dashboard
+ */
+async function grantDashboardAccess(userEmail, dashboardId, namespace) {
+  const userArn = `arn:aws:quicksight:${process.env.REGION}:${process.env.AWS_ACCOUNT_ID}:user/${namespace}/${userEmail}`;
+
+  try {
+    // Check current permissions
+    const describePermCommand = new DescribeDashboardPermissionsCommand({
+      AwsAccountId: process.env.AWS_ACCOUNT_ID,
+      DashboardId: dashboardId,
+    });
+
+    const currentPerms = await quicksightClient.send(describePermCommand);
+    
+    // Check if user already has access
+    const hasAccess = currentPerms.Permissions?.some(perm => 
+      perm.Principal === userArn
+    );
+
+    if (hasAccess) {
+      console.log('User already has dashboard access');
+      return;
+    }
+
+    // Grant access
+    console.log('Granting dashboard access to:', userEmail);
+    const updateCommand = new UpdateDashboardPermissionsCommand({
+      AwsAccountId: process.env.AWS_ACCOUNT_ID,
+      DashboardId: dashboardId,
+      GrantPermissions: [
+        {
+          Principal: userArn,
+          Actions: [
+            'quicksight:DescribeDashboard',
+            'quicksight:ListDashboardVersions',
+            'quicksight:QueryDashboard',
+          ],
+        },
+      ],
+    });
+
+    await quicksightClient.send(updateCommand);
+    console.log('Dashboard access granted successfully');
+  } catch (error) {
+    console.error('Error granting dashboard access:', error);
+    // Don't fail if we can't grant permissions - the embed URL might still work
+    console.warn('Continuing despite permission grant error');
+  }
+}
+
+/**
+ * Generate QuickSight embed URL using RegisteredUser embedding
+ */
+async function generateEmbedUrl(userEmail, dashboardId) {
+  // Create a QuickSight user ARN (using email as username)
+  const quicksightUserArn = `arn:aws:quicksight:${process.env.REGION}:${process.env.AWS_ACCOUNT_ID}:user/default/${userEmail}`;
+
   const command = new GenerateEmbedUrlForRegisteredUserCommand({
-    AwsAccountId: ACCOUNT_ID,
-    UserArn: userArn,
+    AwsAccountId: process.env.AWS_ACCOUNT_ID,
+    UserArn: quicksightUserArn,
+    SessionLifetimeInMinutes: 600, // 10 hours
     ExperienceConfiguration: {
       Dashboard: {
         InitialDashboardId: dashboardId,
       },
     },
-    SessionLifetimeInMinutes: 600, // 10 hours
     AllowedDomains: [
       'https://main.d1mlg7uwn5ksst.amplifyapp.com',
-      'http://localhost:3000', // For local development
+      'http://localhost:3000',
     ],
   });
 
-  const response = await quicksightClient.send(command);
-  console.log('Embed URL generated successfully');
-  return response.EmbedUrl;
+  try {
+    const response = await quicksightClient.send(command);
+    return response.EmbedUrl;
+  } catch (error) {
+    console.error('QuickSight API Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Decode JWT token (basic decoding, not verification)
+ * In production, you should verify the token signature
+ */
+function decodeJWT(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      throw new Error('Invalid JWT token');
+    }
+    
+    const payload = parts[1];
+    const decoded = Buffer.from(payload, 'base64').toString('utf8');
+    return JSON.parse(decoded);
+  } catch (error) {
+    throw new Error('Failed to decode JWT token');
+  }
 }

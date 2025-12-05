@@ -1,0 +1,16 @@
+{
+  "short_name": "HR Analytics",
+  "name": "HR Analytics SaaS Platform",
+  "description": "Enterprise HR Analytics and Productivity Platform",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#2563eb",
+  "background_color": "#f9fafb"
+}
